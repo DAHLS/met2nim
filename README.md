@@ -154,6 +154,37 @@ The binary is self-contained (~2.4 MB) — coastline data is embedded, and the o
 
 The `data/` cache directory is created relative to the current working directory. For a deployment, run from a fixed directory (e.g. `/var/lib/met2img`) or wrap with `cd` in the cron entry.
 
+### Cross-compiling for 32-bit (i386)
+
+To deploy on a 32-bit machine (e.g. an anemic ARM box or legacy i386 system), cross-compile from your 64-bit host:
+
+```bash
+bash build.sh 32
+```
+
+This produces `met2img_i386` — a 32-bit ELF binary. The build requires 32-bit C libraries on the compile host:
+
+```bash
+# Fedora — install 32-bit development libraries
+sudo dnf install -y glibc-devel.i686 hdf5.i686 openblas.i686 openblas-devel.i686 libatomic.i686
+
+# The hdf5-devel.i686 package conflicts with the 64-bit headers, so manually
+# create the .so symlink that nimhdf5's runtime dlopen expects:
+sudo ln -s libhdf5.so.310 /usr/lib/libhdf5.so
+```
+
+| Library | Required by | Why |
+|---------|------------|-----|
+| `glibc-devel.i686` | Nim stdlib | Provides `gnu/stubs-32.h` and 32-bit crt objects |
+| `hdf5.i686` | nimhdf5 | 32-bit `libhdf5.so` (loaded at runtime via `dynlib`) |
+| `openblas.i686` | arraymancer (BLAS/LAPACK) | 32-bit `libopenblas.so` (loaded at runtime via `dynlib`) |
+| `openblas-devel.i686` | arraymancer | Provides the `.so` symlink for linking |
+| `libatomic.i686` | gcc | 32-bit atomic operations library |
+
+The 32-bit binary requires the corresponding 32-bit runtime libraries on the target machine (`libhdf5.so`, `libopenblas.so`, `libatomic.so`, `libssl.so`, and 32-bit glibc).
+
+**Why the extra flags?** Nim's `nim.cfg` has cross-compiler entries for ARM and RISC-V but not for i386-on-amd64. The build script passes `--cpu:i386` (Nim generates 32-bit code), `--gcc.options.always:"-m32"` (gcc produces 32-bit objects), and `--passL:"-m32"` (linker produces a 32-bit binary). On a native 32-bit system, these flags are unnecessary — a plain `nim c` produces 32-bit code by default.
+
 ## Project organization
 
 The codebase is split into 12 small modules (~1,400 lines total), each with a single responsibility. The split follows the Python version's logical boundaries but adapts to Nim's module system and the available libraries.
