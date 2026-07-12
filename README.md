@@ -120,16 +120,6 @@ Downloaded DMI data is stored in a `data/` folder and reused on subsequent runs:
 - **Wind** — `wind_<scanstamp>.json` is saved alongside the radar file, keyed to the same scan timestamp.
 - **Cleanup** — old `.h5` and `wind_*.json` files are deleted only after the new radar file has been written successfully, so a failed download never leaves `data/` empty.
 
-## Automation
-
-A cron job can run the tool every 15 minutes, mirroring the Python version's setup:
-
-```cron
-*/15 * * * * cd /home/amk/Documents/met2img/glm-nim-test && flock -n /tmp/met2img-nim.lock -c "./met2img --outdir autotest >> autotest/cron.log 2>&1"
-```
-
-Output images go to `autotest/radar_*.png` and the log to `autotest/cron.log`. A separate `flock` lock (`/tmp/met2img-nim.lock`) prevents overlapping runs without conflicting with the Python version's lock.
-
 ## Deployment
 
 The binary is self-contained (~2.4 MB) — coastline data is embedded, and the only runtime dependency is the HDF5 shared library (`libhdf5.so`). To deploy to another machine (e.g. a Raspberry Pi driving an e-ink display):
