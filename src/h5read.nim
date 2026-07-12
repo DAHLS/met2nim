@@ -1,4 +1,4 @@
-import std/[strutils, options]
+import std/strutils
 import nimhdf5
 import arraymancer
 import geo
