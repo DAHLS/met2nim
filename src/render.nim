@@ -3,6 +3,21 @@ import pixie
 import arraymancer
 import geo, config, h5read, wind, coast
 
+const embeddedFontBytes* = staticRead("../fonts/DejaVuSans-Bold.ttf")
+
+proc loadWindFont*(overridePath: string): Font =
+  ## Returns the embedded DejaVuSans-Bold font, or a user-supplied font
+  ## via --font. On a bad override path, warns and falls back to embedded.
+  result =
+    if overridePath.len > 0:
+      try: readFont(overridePath)
+      except CatchableError:
+        stderr.writeLine("warning: --font load failed ('" & overridePath & "'); using embedded font")
+        newFont(parseTtf(embeddedFontBytes))
+    else:
+      newFont(parseTtf(embeddedFontBytes))
+  result.size = 22.0
+
 proc cleanRadar*(dbz: Tensor[float32], minDbz: float32,
                  despeckle: bool): Tensor[float32] =
   result = dbz.map(proc(x: float32): float32 =
@@ -11,8 +26,9 @@ proc cleanRadar*(dbz: Tensor[float32], minDbz: float32,
     return
   # 3x3 median filter: a pixel survives only if the median of its
   # 3x3 neighborhood (with NaN treated as minDbz-1) is above threshold.
-  let rows = dbz.shape.data[0]
-  let cols = dbz.shape.data[1]
+  let
+    rows = dbz.shape.data[0]
+    cols = dbz.shape.data[1]
   var med = newTensorWith[float32]([rows, cols], NaN.float32)
   for i in 0 ..< rows:
     for j in 0 ..< cols:
@@ -46,6 +62,7 @@ type
     satBbox*: tuple[w, s, e, n: float64]  # geographic bbox of sat image
     coastlines*: seq[Coastline]
     windArrows*: seq[WindArrow]
+    windFont*: Font
 
 proc projToCanvas*(viewExt: Extent, x, y: float64,
                    canvasW, canvasH: int): tuple[px, py: float32] =
@@ -71,10 +88,11 @@ proc renderRadarOverlay*(canvas: Image, rf: RadarField, viewExt: Extent,
   let rDy = rExt[3] - rExt[2]
   if rDx <= 0 or rDy <= 0:
     return
-  let vDx = viewExt[1] - viewExt[0]
-  let vDy = viewExt[3] - viewExt[2]
-  let cw = canvas.width
-  let ch = canvas.height
+  let
+    vDx = viewExt[1] - viewExt[0]
+    vDy = viewExt[3] - viewExt[2]
+    cw = canvas.width
+    ch = canvas.height
   # For each canvas pixel, map to radar grid and sample (nearest neighbor).
   for py in 0 ..< ch:
     let vY = viewExt[3] - (float64(py) + 0.5) / float64(ch) * vDy
@@ -113,21 +131,34 @@ proc renderRadarOverlay*(canvas: Image, rf: RadarField, viewExt: Extent,
 proc renderSatelliteBackground*(canvas: Image, satImg: Image,
                                 satBbox: tuple[w, s, e, n: float64],
                                 proj: Projection, viewExt: Extent) =
-  let cw = canvas.width
-  let ch = canvas.height
-  let vDx = viewExt[1] - viewExt[0]
-  let vDy = viewExt[3] - viewExt[2]
-  let sDx = satBbox.e - satBbox.w
-  let sDy = satBbox.n - satBbox.s
+  let
+    cw = canvas.width
+    ch = canvas.height
+    vDx = viewExt[1] - viewExt[0]
+    vDy = viewExt[3] - viewExt[2]
+    sDx = satBbox.e - satBbox.w
+    sDy = satBbox.n - satBbox.s
   if sDx <= 0 or sDy <= 0:
     return
-  let sW = satImg.width
-  let sH = satImg.height
+  let
+    sW = satImg.width
+    sH = satImg.height
+  # Precompute lat/lon for every canvas pixel in one inverse-projection pass.
+  # Keeps the expensive (trig-heavy) projection out of the hot sample loop.
+  var latGrid = newSeq[float64](cw * ch)
+  var lonGrid = newSeq[float64](cw * ch)
   for py in 0 ..< ch:
     let vY = viewExt[3] - (float64(py) + 0.5) / float64(ch) * vDy
     for px in 0 ..< cw:
       let vX = viewExt[0] + (float64(px) + 0.5) / float64(cw) * vDx
       let (lat, lon) = proj.inverse(vX, vY)
+      latGrid[py * cw + px] = lat
+      lonGrid[py * cw + px] = lon
+  # Second pass: sample the satellite image with the precomputed coords.
+  for py in 0 ..< ch:
+    for px in 0 ..< cw:
+      let lat = latGrid[py * cw + px]
+      let lon = lonGrid[py * cw + px]
       if lon < satBbox.w or lon > satBbox.e or
          lat < satBbox.s or lat > satBbox.n:
         continue
@@ -146,15 +177,16 @@ proc renderSatelliteBackground*(canvas: Image, satImg: Image,
       canvas[px, py] = rgba(dr, dg, db, 255)
 
 proc renderWindArrows*(ctx: contexts.Context, proj: Projection, viewExt: Extent,
-                       arrows: seq[WindArrow]) =
+                       arrows: seq[WindArrow], windFont: Font) =
   if arrows.len == 0:
     return
   let (x0, y0, x1, y1, fx, fy) = arrowEndpoints(proj, arrows)
   let polys = arrowPolygons(x0, y0, x1, y1, fx, fy)
-  let cw = ctx.image.width.float32
-  let ch = ctx.image.height.float32
-  let vDx = float32(viewExt[1] - viewExt[0])
-  let vDy = float32(viewExt[3] - viewExt[2])
+  let
+    cw = ctx.image.width.float32
+    ch = ctx.image.height.float32
+    vDx = float32(viewExt[1] - viewExt[0])
+    vDy = float32(viewExt[3] - viewExt[2])
   # Fill arrows.
   ctx.fillStyle = color(ArrowColorR, ArrowColorG, ArrowColorB, ArrowColorA)
   for i, poly in polys:
@@ -172,23 +204,23 @@ proc renderWindArrows*(ctx: contexts.Context, proj: Projection, viewExt: Extent,
       ctx.closePath()
       ctx.fill()
   # Speed labels: bold black text with white outline on each arrow.
-  ctx.font = "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans-Bold.ttf"
-  ctx.fontSize = 22.0
-  ctx.textAlign = CenterAlign
-  ctx.textBaseline = AlphabeticBaseline
+  # Both stroke and fill use the same typeset arrangement, so they align
+  # automatically (no manual baseline offset needed).
   for i, a in arrows:
     let mx = (x0[i] + x1[i]) / 2.0
     let my = (y0[i] + y1[i]) / 2.0
     let px = float32((mx - viewExt[0]) / float64(vDx) * float64(cw))
-    let py = float32((viewExt[3] - my) / float64(vDy) * float64(ch)) + ctx.fontSize * 0.32
+    let py = float32((viewExt[3] - my) / float64(vDy) * float64(ch))
     let label = $int(a.speed)
-    # White stroke (outline).
-    ctx.strokeStyle = rgba(255, 255, 255, 255)
-    ctx.lineWidth = 3.0
-    ctx.strokeText(label, vec2(px, py))
-    # Black fill.
-    ctx.fillStyle = rgba(0, 0, 0, 255)
-    ctx.fillText(label, vec2(px, py))
+    let t = translate(vec2(px, py))
+    # White stroke (outline) drawn first.
+    windFont.paint = rgba(255, 255, 255, 255)
+    ctx.image.strokeText(windFont, label, t,
+      strokeWidth = 3.0, hAlign = CenterAlign, vAlign = MiddleAlign)
+    # Black fill on top.
+    windFont.paint = rgba(0, 0, 0, 255)
+    ctx.image.fillText(windFont, label, t,
+      hAlign = CenterAlign, vAlign = MiddleAlign)
 
 proc renderImage*(rf: RadarField, scanDt: string, args: RenderArgs): Image =
   let proj = rf.proj
@@ -211,12 +243,13 @@ proc renderImage*(rf: RadarField, scanDt: string, args: RenderArgs): Image =
   # 4. Wind arrows.
   if args.useWind and args.windArrows.len > 0:
     let ctx = newContext(canvas)
-    renderWindArrows(ctx, proj, viewExt, args.windArrows)
+    renderWindArrows(ctx, proj, viewExt, args.windArrows, args.windFont)
     echo &"plotted {args.windArrows.len} wind arrows"
 
   result = canvas
 
 proc saveImage*(img: Image, outDir, scanStamp: string) =
+  discard existsOrCreateDir(outDir)
   let outName = "radar_" & scanStamp & ".png"
   let outPath = outDir / outName
   img.writeFile(outPath)

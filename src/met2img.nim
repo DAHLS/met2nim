@@ -17,9 +17,16 @@ Options:
   --no-satellite      Skip satellite background (shortcut for --sat-source none)
   --no-wind           Skip wind arrows
   --min-dbz N         Mask radar echoes below N dBZ (default 10)
+  --font PATH         Use a specific .ttf/.otf font file (default: embedded)
   --despeckle         Remove isolated single-pixel echoes
   --zoom N            Zoom factor (default 1.0)
 """
+
+proc parseF(name, val: string): float32 =
+  try: parseFloat(val)
+  except CatchableError:
+    stderr.writeLine(&"error: invalid value for --{name}: '{val}' (expected a number)")
+    quit(1)
 
 proc parseCli(): AppConfig =
   result = defaultConfig()
@@ -30,7 +37,7 @@ proc parseCli(): AppConfig =
     if a.startsWith("--"):
       let eq = a.find('=')
       let key = if eq > 0: a[2 ..< eq] else: a[2 .. ^1]
-      let needsVal = key in ["outdir", "collection", "sat-source", "min-dbz", "zoom"]
+      let needsVal = key in ["outdir", "collection", "sat-source", "min-dbz", "zoom", "font"]
       let val = if eq > 0: a[eq + 1 .. ^1]
                 elif needsVal and i + 1 < args.len:
                   inc i; args[i]
@@ -56,9 +63,10 @@ proc parseCli(): AppConfig =
           echo "Unknown sat-source: " & val
           quit(1)
       of "no-wind": result.noWind = true
-      of "min-dbz": result.minDbz = parseFloat(val)
+      of "min-dbz": result.minDbz = parseF("min-dbz", val)
+      of "font": result.fontPath = val
       of "despeckle": result.despeckle = true
-      of "zoom": result.zoom = parseFloat(val)
+      of "zoom": result.zoom = parseF("zoom", val)
       of "help", "h":
         printUsage()
         quit(0)
@@ -83,21 +91,25 @@ proc main() =
     scanDt: Time
     dtIso: string
 
-  if multiStation:
-    let si = fetchNewestRadarSet(collectionName)
-    scanDt = si.scanDt
-    dtIso = si.dtIso
-    echo &"  newest: {si.items.len} stations @ {scanDt.utc.format(\"yyyy-MM-dd HH:mm 'UTC'\")}"
-    for item in si.items:
-      echo "    " & item.fname
-    h5Paths = downloadAndCacheRadarSet(si)
-  else:
-    let item = fetchNewestRadar(collectionName)
-    dtIso = item.dtIso
-    let s = dtIso.replace("Z", "+00:00")
-    scanDt = parse(s, "yyyy-MM-dd'T'HH:mm:sszzz", utc()).toTime()
-    echo &"  newest: {item.fname}  ({scanDt.utc.format(\"yyyy-MM-dd HH:mm 'UTC'\")})"
-    h5Paths = @[downloadAndCacheRadarSingle(item)]
+  try:
+    if multiStation:
+      let si = fetchNewestRadarSet(collectionName)
+      scanDt = si.scanDt
+      dtIso = si.dtIso
+      echo &"  newest: {si.items.len} stations @ {scanDt.utc.format(\"yyyy-MM-dd HH:mm 'UTC'\")}"
+      for item in si.items:
+        echo "    " & item.fname
+      h5Paths = downloadAndCacheRadarSet(si)
+    else:
+      let item = fetchNewestRadar(collectionName)
+      dtIso = item.dtIso
+      let s = dtIso.replace("Z", "+00:00")
+      scanDt = parse(s, "yyyy-MM-dd'T'HH:mm:sszzz", utc()).toTime()
+      echo &"  newest: {item.fname}  ({scanDt.utc.format(\"yyyy-MM-dd HH:mm 'UTC'\")})"
+      h5Paths = @[downloadAndCacheRadarSingle(item)]
+  except CatchableError as e:
+    stderr.writeLine(&"error: radar fetch failed ({e.msg})")
+    quit(1)
 
   # Wind cache path.
   let stamp = scanDt.utc.format("yyyyMMdd-HHmm")
@@ -106,8 +118,9 @@ proc main() =
   echo "Parsing radar data..."
   let rf = parseRadarField(h5Paths, cfg.collection)
   # Report reflectivity range.
-  var minVal = Inf
-  var maxVal = -Inf
+  var
+    minVal = Inf
+    maxVal = -Inf
   for v in rf.dbz:
     if v == v:  # not NaN
       minVal = min(minVal, float(v))
@@ -127,20 +140,23 @@ proc main() =
         discard existsOrCreateDir(DataDir)
         saveWindCache(windPath, windStations)
         echo &"  {windStations.len} stations with wind_dir+wind_speed (cached)"
-      except Exception as e:
-        echo &"  warning: wind fetch failed ({e.msg})"
+      except CatchableError as e:
+        stderr.writeLine(&"  warning: wind fetch failed ({e.msg})")
       # Clean up old wind JSON files.
       for f in walkFiles(DataDir / "wind_*.json"):
         if f != windPath:
           try: removeFile(f)
-          except: discard
+          except CatchableError: discard
 
   let windArrows = if not cfg.noWind: assignWindToSites(windStations, WindSites)
                    else: @[]
 
+  let windFont = loadWindFont(cfg.fontPath)
+
   # Satellite.
-  var satImg: Image = nil
-  var satBbox: tuple[w, s, e, n: float64] = (0, 0, 0, 0)
+  var
+    satImg: Image = nil
+    satBbox: tuple[w, s, e, n: float64] = (0, 0, 0, 0)
   let satSource = if cfg.noSatellite: ssNone else: cfg.satSource
   if satSource != ssNone:
     satImg = fetchSatellite(satSource, rf.proj, scanDt, cfg.zoom)
@@ -161,6 +177,7 @@ proc main() =
     satBbox: satBbox,
     coastlines: coastlines,
     windArrows: windArrows,
+    windFont: windFont,
   )
   let img = renderImage(rf, dtIso, renderArgs)
   saveImage(img, cfg.outDir, stamp)

@@ -135,23 +135,25 @@ proc viewExtent*(p: Projection, zoom: float64): Extent =
 # --- Vincenty geodesic ---
 
 proc vincentyInverse*(lon1, lat1, lon2, lat2: float64): tuple[az, baz, dist: float64] =
-  let a = Wgs84A
-  let f = Wgs84F
-  let b = Wgs84B
-  let phi1 = degToRad(lat1)
-  let phi2 = degToRad(lat2)
-  let l = degToRad(lon2 - lon1)
+  let
+    a = Wgs84A
+    f = Wgs84F
+    b = Wgs84B
+    phi1 = degToRad(lat1)
+    phi2 = degToRad(lat2)
+    l = degToRad(lon2 - lon1)
   let u1 = arctan((1.0 - f) * tan(phi1))
   let u2 = arctan((1.0 - f) * tan(phi2))
   let sinU1 = sin(u1); let cosU1 = cos(u1)
   let sinU2 = sin(u2); let cosU2 = cos(u2)
-  var lambda = l
-  var lambdaP = 2.0 * PI
-  var sinSigma = 0.0
-  var cosSigma = 1.0
-  var sigma = 0.0
-  var cosSqAlpha = 1.0
-  var cos2SigmaM = 1.0
+  var
+    lambda = l
+    lambdaP = 2.0 * PI
+    sinSigma = 0.0
+    cosSigma = 1.0
+    sigma = 0.0
+    cosSqAlpha = 1.0
+    cos2SigmaM = 1.0
   for iter in 0 ..< 100:
     let sinLambda = sin(lambda)
     let cosLambda = cos(lambda)
@@ -189,10 +191,11 @@ proc vincentyInverse*(lon1, lat1, lon2, lat2: float64): tuple[az, baz, dist: flo
   result.baz = backAzN
 
 proc vincentyForward*(lon, lat, az, dist: float64): tuple[lon2, lat2: float64] =
-  let a = Wgs84A
-  let f = Wgs84F
-  let b = Wgs84B
-  let phi1 = degToRad(lat)
+  let
+    a = Wgs84A
+    f = Wgs84F
+    b = Wgs84B
+    phi1 = degToRad(lat)
   let alpha1 = degToRad(az)
   let sinAlpha1 = sin(alpha1)
   let cosAlpha1 = cos(alpha1)
@@ -205,11 +208,12 @@ proc vincentyForward*(lon, lat, az, dist: float64): tuple[lon2, lat2: float64] =
   let uSq = cosSqAlpha * (a * a - b * b) / (b * b)
   let bigA = 1.0 + uSq / 16384.0 * (4096.0 + uSq * (-768.0 + uSq * (320.0 - 175.0 * uSq)))
   let bigB = uSq / 1024.0 * (256.0 + uSq * (-128.0 + uSq * (74.0 - 47.0 * uSq)))
-  var sigma = dist / (b * bigA)
-  var sigmaP = 2.0 * PI
-  var cos2SigmaM = 0.0
-  var sinSigma = 0.0
-  var cosSigma = 1.0
+  var
+    sigma = dist / (b * bigA)
+    sigmaP = 2.0 * PI
+    cos2SigmaM = 0.0
+    sinSigma = 0.0
+    cosSigma = 1.0
   for iter in 0 ..< 100:
     cos2SigmaM = cos(2.0 * sigma1 + sigma)
     sinSigma = sin(sigma)

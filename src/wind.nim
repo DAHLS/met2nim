@@ -5,14 +5,15 @@ type
   WindStation* = tuple[lon, lat, dirFrom, speed: float64]
 
 proc fetchWindAt*(scanDt: Time, windowMinutes = 10): seq[WindStation] =
-  let lo = scanDt - initDuration(minutes = windowMinutes)
-  let hi = scanDt + initDuration(minutes = windowMinutes)
+  let
+    lo = scanDt - initDuration(minutes = windowMinutes)
+    hi = scanDt + initDuration(minutes = windowMinutes)
   let loStr = lo.utc.format("yyyy-MM-dd'T'HH:mm:ss'Z'")
   let hiStr = hi.utc.format("yyyy-MM-dd'T'HH:mm:ss'Z'")
   let dtRange = loStr & "/" & hiStr
 
   proc fetch(param: string): JsonNode =
-    let url = &"{DmiMetObsApi}/collections/observation/items?parameterId={param}&datetime={dtRange}&bbox={WindBbox}&limit=300000"
+    let url = &"{DmiMetObsApi}/collections/observation/items?parameterId={param}&datetime={dtRange}&bbox={WindBbox}&limit={WindFetchLimit}"
     httpGetJson(url){"features"}
 
   let dfeats = fetch("wind_dir")
@@ -115,13 +116,11 @@ proc arrowEndpoints*(proj: Projection, arrows: seq[WindArrow],
     result.fx[i] = fx
     result.fy[i] = fy
 
-proc arrowPolygons*(x0, y0, x1, y1, fx, fy: seq[float64],
-                    lengthM = 41000.0, headSize = 35.0,
-                    shaftWidth = 8.0): seq[ArrowGeom] =
+proc arrowPolygons*(x0, y0, x1, y1, fx, fy: seq[float64]): seq[ArrowGeom] =
   const
-    ShaftHalfM = 8.0 * 900.0
-    HeadLenM = 35.0 * 900.0
-    HeadWidM = 35.0 * 400.0
+    ArrowShaftHalfWidthM = 7200.0    # shaft half-width
+    ArrowHeadLenM        = 31500.0   # head length (77% of the 41 km arrow)
+    ArrowHeadHalfWidthM  = 14000.0   # head half-width
   for i in 0 ..< x0.len:
     let dx = fx[i]
     let dy = fy[i]
@@ -131,16 +130,16 @@ proc arrowPolygons*(x0, y0, x1, y1, fx, fy: seq[float64],
     let sy = y0[i]
     let ex = x1[i]
     let ey = y1[i]
-    let jx = ex - dx * HeadLenM
-    let jy = ey - dy * HeadLenM
+    let jx = ex - dx * ArrowHeadLenM
+    let jy = ey - dy * ArrowHeadLenM
     let verts = @[
-      (sx + px * ShaftHalfM, sy + py * ShaftHalfM),
-      (sx - px * ShaftHalfM, sy - py * ShaftHalfM),
-      (jx - px * ShaftHalfM, jy - py * ShaftHalfM),
-      (jx - px * HeadWidM, jy - py * HeadWidM),
+      (sx + px * ArrowShaftHalfWidthM, sy + py * ArrowShaftHalfWidthM),
+      (sx - px * ArrowShaftHalfWidthM, sy - py * ArrowShaftHalfWidthM),
+      (jx - px * ArrowShaftHalfWidthM, jy - py * ArrowShaftHalfWidthM),
+      (jx - px * ArrowHeadHalfWidthM, jy - py * ArrowHeadHalfWidthM),
       (ex, ey),
-      (jx + px * HeadWidM, jy + py * HeadWidM),
-      (jx + px * ShaftHalfM, jy + py * ShaftHalfM),
+      (jx + px * ArrowHeadHalfWidthM, jy + py * ArrowHeadHalfWidthM),
+      (jx + px * ArrowShaftHalfWidthM, jy + py * ArrowShaftHalfWidthM),
     ]
     result.add(verts)
 

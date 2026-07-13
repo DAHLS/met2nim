@@ -79,6 +79,7 @@ Output: `radar_YYYYMMDD-HHMM.png` (UTC timestamp from radar scan time)
 | `--no-wind` | — | Skip wind arrows |
 | `--min-dbz N` | `10.0` | Mask radar echoes below this dBZ threshold |
 | `--despeckle` | — | Remove isolated single-pixel echoes (3×3 median filter) |
+| `--font PATH` | embedded | Use a specific `.ttf`/`.otf` font for wind labels (default: bundled DejaVuSans-Bold) |
 
 Both `--flag value` and `--flag=value` forms are accepted.
 
@@ -97,7 +98,7 @@ When an EUMETSAT source fails (e.g. true-color at night returns an empty/transpa
 The build script (`build.sh`) compiles with:
 
 ```bash
-nim c -d:release -d:H5_FUTURE -d:ssl -o:met2img src/met2img.nim
+nim c -d:danger -d:H5_FUTURE -d:ssl -o:met2img src/met2img.nim
 ```
 
 | Flag | Why |
@@ -180,7 +181,7 @@ The 32-bit binary requires the corresponding 32-bit runtime libraries on the tar
 The codebase is split into 12 small modules (~1,400 lines total), each with a single responsibility. The split follows the Python version's logical boundaries but adapts to Nim's module system and the available libraries.
 
 ```
-glm-nim-test/
+met2nim/
 ├── src/
 │   ├── met2img.nim     # Entry point: CLI parsing, orchestration
 │   ├── config.nim      # Constants, colormap, wind sites, CLI config type
@@ -195,6 +196,7 @@ glm-nim-test/
 │   └── httputil.nim    # Shared HTTP helpers (GET json/bytes)
 ├── met2img.nimble      # Nimble package file (declares deps, srcDir = "src")
 ├── build.sh            # Build script
+├── fonts/              # Bundled DejaVuSans-Bold.ttf (build-time only, embedded via staticRead)
 ├── coast.geojson       # Coastline data (build-time only, embedded via staticRead)
 ├── data/               # Radar/wind cache
 └── autotest/           # Cron output + log
@@ -351,9 +353,9 @@ Unlike numpy's `flipud`/`fliplr`, Arraymancer has no array flip primitive. The p
 
 pixie's `Context` (the 2D canvas context) and arraymancer's `autograd.Context` (computational graph context) collide when both libraries are imported in the same module. Must qualify: `contexts.Context` in function signatures.
 
-### Pixie `strokeText` ignores `textBaseline`
+### Pixie `strokeText` and `fillText` alignment
 
-Unlike `fillText` (which respects `ctx.textBaseline` — `MiddleBaseline`, `AlphabeticBaseline`, etc.), pixie's `strokeText` always uses `AlphabeticBaseline` regardless of the setting. For outlined text where the stroke and fill must align, set `AlphabeticBaseline` for both and manually offset the y-coordinate to center vertically (`py += fontSize * 0.32`).
+Unlike `fillText` (which respects `ctx.textBaseline` — `MiddleBaseline`, `AlphabeticBaseline`, etc.), pixie's `strokeText` always uses `AlphabeticBaseline` regardless of the setting. The wind labels avoid this pitfall by calling the `Image`-level `fillText`/`strokeText` overloads that take a `Font` directly: both share one typeset arrangement, so the white outline and black fill are inherently aligned, and `MiddleAlign` centers the label on the arrow without any manual y-offset. The font itself is the bundled DejaVuSans-Bold loaded in-memory via `parseTtf` (see the `staticRead` note above).
 
 ### Pixie `beginPath()` between shapes
 
@@ -381,6 +383,8 @@ const coastData = staticRead("../coast.geojson")
 ```
 
 The path is relative to the source file (hence `../` from `src/`). At runtime, the data is parsed from the string — no file I/O needed. The `coast.geojson` file at the project root is a build-time dependency only; it's not needed at runtime. This makes the binary self-contained and deployable as a single file.
+
+The same mechanism embeds the wind-label font: `fonts/DejaVuSans-Bold.ttf` (~709 KB) is read at compile time and parsed in-memory with pixie's `parseTtf` (no system font path is required at runtime, so the binary still runs unchanged on the Raspberry Pi). A `--font PATH` flag overrides the bundled font when needed (e.g. for other glyph coverage); a bad path falls back to the embedded font with a warning.
 
 ### Vincenty geodesic in pure Nim
 

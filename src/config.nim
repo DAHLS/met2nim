@@ -8,6 +8,12 @@ const
   EumFetchW* = 4096
   EumFetchH* = 3072
 
+  # Safety limit for the WMS GetMap bbox. CRS:84 covers the whole globe,
+  # but clamping the requested geographic extent guards against feeding the
+  # provider an out-of-swath area if the view is ever widened. Denmark sits
+  # well inside this, so it's currently a no-op for the normal framing.
+  WmsExtentLimit* = 77.0
+
   GibsWmsUrl* = "https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi"
   GobsLayer* = "MODIS_Terra_CorrectedReflectance_TrueColor"
 
@@ -18,6 +24,11 @@ const
   BaseWidthM* = 1_050_000.0
 
   WindBbox* = "3,52,21,60"
+  # OGC API page-size cap for the wind query. The ±10 min window over the
+  # Danish bbox yields only ~30 stations' observations, but we set this very
+  # high (3+ orders of magnitude) so every feature arrives in one response
+  # without any pagination handling.
+  WindFetchLimit* = 300000
   MsToKnot* = 1.9438444924406046
 
   MaxStationRadiusKm* = 75.0
@@ -99,6 +110,7 @@ type
     minDbz*: float32
     despeckle*: bool
     zoom*: float64
+    fontPath*: string
 
 proc defaultConfig*(): AppConfig =
   result.outDir = "."
@@ -109,3 +121,4 @@ proc defaultConfig*(): AppConfig =
   result.minDbz = 10.0
   result.despeckle = false
   result.zoom = 1.0
+  result.fontPath = ""

@@ -2,33 +2,24 @@ import std/[math]
 import arraymancer
 import geo, h5read
 
-proc bilinearSample(t: Tensor[float32], xIn, yIn: seq[float64],
-                    x, y: float64): float32 =
+proc bilinearSample*(t: Tensor[float32], xIn, yIn: seq[float64],
+                     x, y: float64; j0, i0: var int): float32 =
   # Nearest-neighbor clamping to valid range.
-  let nx = xIn.len
-  let ny = yIn.len
+  # `j0`/`i0` are hints seeded by the caller and advanced in place so the
+  # bracketing search is O(1) amortized across consecutive (monotonic) samples.
+  let
+    nx = xIn.len
+    ny = yIn.len
   if nx < 2 or ny < 2:
     return NaN.float32
-  # Find column index.
-  var j0 = 0
-  if x <= xIn[0]:
-    j0 = 0
-  elif x >= xIn[nx - 1]:
-    j0 = nx - 2
-  else:
-    while j0 < nx - 2 and xIn[j0 + 1] < x:
-      inc j0
+  # Column index: bracket x starting from the hint.
+  while j0 < nx - 2 and xIn[j0 + 1] <= x: inc j0
+  while j0 > 0 and xIn[j0] > x: dec j0
   let j1 = j0 + 1
   let tx = clamp((x - xIn[j0]) / (xIn[j1] - xIn[j0]), 0.0, 1.0)
-  # Find row index.
-  var i0 = 0
-  if y <= yIn[0]:
-    i0 = 0
-  elif y >= yIn[ny - 1]:
-    i0 = ny - 2
-  else:
-    while i0 < ny - 2 and yIn[i0 + 1] < y:
-      inc i0
+  # Row index: bracket y starting from the hint.
+  while i0 < ny - 2 and yIn[i0 + 1] <= y: inc i0
+  while i0 > 0 and yIn[i0] > y: dec i0
   let i1 = i0 + 1
   let ty = clamp((y - yIn[i0]) / (yIn[i1] - yIn[i0]), 0.0, 1.0)
   # Bilinear interpolation.
@@ -86,12 +77,17 @@ proc compositePseudoCappi*(stations: seq[PseudoCappiStation],
   for st in stations:
     for iy in 0 ..< ny:
       let yOut = ymax - (ymax - ymin) * float64(iy) / float64(ny - 1)
+      # Running indices: reset per row; advanced in place by bilinearSample
+      # as xOut increases monotonically across the row.
+      var
+        j0 = 0
+        i0 = 0
       for ix in 0 ..< nx:
         let xOut = xmin + (xmax - xmin) * float64(ix) / float64(nx - 1)
         # Output stereographic -> lat/lon -> station gnomonic.
         let (lat, lon) = outProj.inverse(xOut, yOut)
         let (sx, sy) = st.stationProj.forward(lat, lon)
-        let v = bilinearSample(st.dbz, st.xIn, st.yIn, sx, sy)
+        let v = bilinearSample(st.dbz, st.xIn, st.yIn, sx, sy, j0, i0)
         if not v.isNaN:
           let cur = grid[iy, ix]
           if cur.isNaN or v > cur:

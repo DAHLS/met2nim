@@ -29,10 +29,10 @@ proc viewGeographicBbox*(proj: Projection, zoom: float64): tuple[w, s, e, n: flo
     lonMax = max(lonMax, lon)
     latMin = min(latMin, lat)
     latMax = max(latMax, lat)
-  result.w = max(lonMin, -77.0)
-  result.e = min(lonMax, 77.0)
-  result.s = max(latMin, -77.0)
-  result.n = min(latMax, 77.0)
+  result.w = max(lonMin, -WmsExtentLimit)
+  result.e = min(lonMax, WmsExtentLimit)
+  result.s = max(latMin, -WmsExtentLimit)
+  result.n = min(latMax, WmsExtentLimit)
 
 proc fetchEumetsat*(layer: string, cadence: int,
                     proj: Projection, scanDt: Time, zoom: float64): Image =
@@ -72,7 +72,7 @@ proc gibsProbeDate*(dateStr: string): bool =
       if px.r > 0 or px.g > 0 or px.b > 0:
         return true
     return false
-  except:
+  except CatchableError:
     return false
 
 proc fetchGibs*(proj: Projection, scanDt: Time, zoom: float64): Image =
@@ -112,10 +112,10 @@ proc fetchSatellite*(source: SatSource, proj: Projection,
   let (layer, cadence) = eumLayer(source)
   try:
     return fetchEumetsat(layer, cadence, proj, scanDt, zoom)
-  except Exception as e:
-    echo &"warning: EUMETSAT satellite failed ({e.msg}); falling back to GIBS daily MODIS"
+  except CatchableError as e:
+    stderr.writeLine(&"warning: EUMETSAT satellite failed ({e.msg}); falling back to GIBS daily MODIS")
     try:
       return fetchGibs(proj, scanDt, zoom)
-    except Exception as e2:
-      echo &"warning: GIBS satellite also failed ({e2.msg}); continuing without it"
+    except CatchableError as e2:
+      stderr.writeLine(&"warning: GIBS satellite also failed ({e2.msg}); continuing without it")
       return nil

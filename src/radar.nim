@@ -10,7 +10,10 @@ type
     dtIso*: string
 
 proc extractFeature*(f: JsonNode): RadarItem =
-  result.fname = f["id"].getStr()
+  let idNode = f{"id"}
+  if idNode == nil or idNode.kind != JString:
+    raise newException(ValueError, "radar feature missing required 'id' field")
+  result.fname = idNode.getStr()
   let asset = f{"asset"}
   if asset != nil and asset.kind == JObject:
     if asset.hasKey("data"):
@@ -43,7 +46,7 @@ proc fetchNewestRadarSet*(collection: string, limit = 10): ScanInfo =
       let item = extractFeature(f)
       if item.href.len > 0:
         byTime.mgetOrPut(item.dtIso, @[]).add(item)
-    except:
+    except CatchableError:
       discard
 
   # Sort by datetime descending; prefer the one with the most stations.
@@ -69,8 +72,9 @@ proc scanStamp*(si: ScanInfo): string =
 
 proc downloadAndCacheRadarSet*(si: ScanInfo): seq[string] =
   discard existsOrCreateDir(DataDir)
-  var h5Paths: seq[string] = @[]
-  var downloaded = false
+  var
+    h5Paths: seq[string] = @[]
+    downloaded = false
   for item in si.items:
     let radarPath = DataDir / item.fname
     if fileExists(radarPath):
@@ -91,7 +95,7 @@ proc downloadAndCacheRadarSet*(si: ScanInfo): seq[string] =
   for f in walkFiles(DataDir / "*.h5"):
     if f.absolutePath notin keepSet:
       try: removeFile(f)
-      except: discard
+      except CatchableError: discard
   result = h5Paths
 
 proc downloadAndCacheRadarSingle*(item: RadarItem): string =
@@ -109,7 +113,7 @@ proc downloadAndCacheRadarSingle*(item: RadarItem): string =
   for f in walkFiles(DataDir / "*.h5"):
     if f != radarPath:
       try: removeFile(f)
-      except: discard
+      except CatchableError: discard
   result = radarPath
 
 proc parseRadarField*(paths: seq[string], collection: CollectionKind): RadarField =

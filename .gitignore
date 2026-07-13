@@ -1,0 +1,17 @@
+# Compiled binaries
+/met2img
+/tests/test_geo
+/tests/test_config
+/tests/test_interp
+/tests/test_wind
+
+# Nim cache
+/nimcache/
+
+# Runtime / generated data
+/data/
+/autotest/
+/benchmark/
+
+# Stray render output at repo root
+/radar_*.png
