@@ -12,6 +12,11 @@ proc bilinearSample*(t: Tensor[float32], xIn, yIn: seq[float64],
     ny = yIn.len
   if nx < 2 or ny < 2:
     return NaN.float32
+  # Reject points outside the grid domain. Without this the bracket search
+  # clamps to the edge cell and tx/ty clamp to [0,1], extrapolating edge
+  # values instead of signalling no-data.
+  if x < xIn[0] or x > xIn[^1] or y < yIn[0] or y > yIn[^1]:
+    return NaN.float32
   # Column index: bracket x starting from the hint.
   while j0 < nx - 2 and xIn[j0 + 1] <= x: inc j0
   while j0 > 0 and xIn[j0] > x: dec j0

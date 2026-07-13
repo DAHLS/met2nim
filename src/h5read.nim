@@ -1,4 +1,3 @@
-import std/strutils
 import nimhdf5
 import arraymancer
 import geo
@@ -29,84 +28,76 @@ proc readAttrF64*(grp: H5Group, name: string, path: string): float64 =
 proc readAttrStr*(grp: H5Group, name: string, path: string): string =
   result = grp.attrs[name, string]
 
-proc readAttrStrF64*(grp: H5Group, name: string, path: string): string =
-  result = readAttrStr(grp, name, path)
-  result = result.strip()
+# --- Shared helpers ---
+
+proc projectionExtent*(whereGrp: H5Group, proj: Projection, path: string): Extent =
+  # Project the four LL/LR/UL/UR corner attributes and return the
+  # enclosing bbox in projection metres: (xmin, xmax, ymin, ymax).
+  const cornerKeys = [("LL_lon", "LL_lat"), ("LR_lon", "LR_lat"),
+                      ("UL_lon", "UL_lat"), ("UR_lon", "UR_lat")]
+  result = (Inf, -Inf, Inf, -Inf)
+  for (klon, klat) in cornerKeys:
+    let lon = readAttrF64(whereGrp, klon, path)
+    let lat = readAttrF64(whereGrp, klat, path)
+    let (x, y) = proj.forward(lat, lon)
+    result[0] = min(result[0], x)
+    result[1] = max(result[1], x)
+    result[2] = min(result[2], y)
+    result[3] = max(result[3], y)
+
+proc fillScaled*[T](dest: var Tensor[float32], dset: H5DataSet,
+                    gain, offset, nodata: float64) =
+  let shape = dset.shape
+  let rows = shape[0]
+  let cols = shape[1]
+  let raw = dset.read(T)
+  for i in 0 ..< rows:
+    for j in 0 ..< cols:
+      let v = raw[i * cols + j]
+      if float64(v) == nodata:
+        dest[i, j] = NaN.float32
+      else:
+        dest[i, j] = float32(gain * float64(v) + offset)
+
+proc readScaledDbz*(dset: H5DataSet, gain, offset, nodata: float64,
+                    path: string): Tensor[float32] =
+  # Read the raw dataset and convert to float32 reflectivity via
+  # dbz = gain * raw + offset, mapping `nodata` to NaN.
+  let shape = dset.shape
+  let rows = shape[0]
+  let cols = shape[1]
+  result = newTensor[float32]([rows, cols])
+  case dset.dtypeAnyKind
+  of dkUInt8: fillScaled[uint8](result, dset, gain, offset, nodata)
+  of dkInt16: fillScaled[int16](result, dset, gain, offset, nodata)
+  of dkInt8: fillScaled[int8](result, dset, gain, offset, nodata)
+  else: failH5(path, "unexpected dataset dtype: " & $dset.dtypeAnyKind)
+
+proc readWhatScaling*(h5f: H5File, path: string): tuple[gain, offset, nodata: float64] =
+  let whatGrp = h5f["what".grp_str]
+  result.gain = readAttrF64(whatGrp, "gain", path)
+  result.offset = readAttrF64(whatGrp, "offset", path)
+  result.nodata = readAttrF64(whatGrp, "nodata", path)
+
+proc readProjection*(h5f: H5File, path: string): Projection =
+  let whereGrp = h5f["where".grp_str]
+  result = parseProjdef(readAttrStr(whereGrp, "projdef", path))
+
+# --- Public readers ---
 
 proc parseRadarH5*(path: string): RadarField =
   let h5f = H5open(path, "r")
   defer: discard h5f.close()
 
-  let whatGrp = h5f["what".grp_str]
+  let (gain, offset, nodata) = readWhatScaling(h5f, path)
+  let proj = readProjection(h5f, path)
   let whereGrp = h5f["where".grp_str]
-
-  let gain = readAttrF64(whatGrp, "gain", path)
-  let offset = readAttrF64(whatGrp, "offset", path)
-  let nodata = readAttrF64(whatGrp, "nodata", path)
-
-  let projdef = readAttrStr(whereGrp, "projdef", path)
-  let proj = parseProjdef(projdef)
-
-  let cornerKeys = [("LL_lon", "LL_lat"), ("LR_lon", "LR_lat"),
-                    ("UL_lon", "UL_lat"), ("UR_lon", "UR_lat")]
-  var
-    xmin = Inf
-    xmax = -Inf
-    ymin = Inf
-    ymax = -Inf
-  for (klon, klat) in cornerKeys:
-    let lon = readAttrF64(whereGrp, klon, path)
-    let lat = readAttrF64(whereGrp, klat, path)
-    let (x, y) = proj.forward(lat, lon)
-    xmin = min(xmin, x)
-    xmax = max(xmax, x)
-    ymin = min(ymin, y)
-    ymax = max(ymax, y)
+  let extent = projectionExtent(whereGrp, proj, path)
 
   let dset = h5f["dataset1/data1/data".dset_str]
-  let shape = dset.shape
-  let rows = shape[0]
-  let cols = shape[1]
-  let dtypeKind = dset.dtypeAnyKind
+  let dbz = readScaledDbz(dset, gain, offset, nodata, path)
 
-  # Read raw data and convert to float32 reflectivity.
-  var dbzData = newTensor[float32]([rows, cols])
-  case dtypeKind
-  of dkUInt8:
-    let raw = dset.read(uint8)
-    for i in 0 ..< rows:
-      for j in 0 ..< cols:
-        let v = raw[i * cols + j]
-        if float64(v) == nodata:
-          dbzData[i, j] = NaN.float32
-        else:
-          dbzData[i, j] = float32(gain * float64(v) + offset)
-  of dkInt16:
-    let raw = dset.read(int16)
-    for i in 0 ..< rows:
-      for j in 0 ..< cols:
-        let v = raw[i * cols + j]
-        if float64(v) == nodata:
-          dbzData[i, j] = NaN.float32
-        else:
-          dbzData[i, j] = float32(gain * float64(v) + offset)
-  of dkInt8:
-    let raw = dset.read(int8)
-    for i in 0 ..< rows:
-      for j in 0 ..< cols:
-        let v = raw[i * cols + j]
-        if float64(v) == nodata:
-          dbzData[i, j] = NaN.float32
-        else:
-          dbzData[i, j] = float32(gain * float64(v) + offset)
-  else:
-    failH5(path, "unexpected dataset dtype: " & $dtypeKind)
-
-  result = RadarField(
-    dbz: dbzData,
-    extent: (xmin, xmax, ymin, ymax),
-    proj: proj,
-  )
+  result = RadarField(dbz: dbz, extent: extent, proj: proj)
 
 type
   PseudoCappiStation* = object
@@ -119,60 +110,17 @@ proc readPseudoCappiStation*(path: string): PseudoCappiStation =
   let h5f = H5open(path, "r")
   defer: discard h5f.close()
 
-  let whatGrp = h5f["what".grp_str]
+  let (gain, offset, nodata) = readWhatScaling(h5f, path)
+  let stationProj = readProjection(h5f, path)
   let whereGrp = h5f["where".grp_str]
-
-  let gain = readAttrF64(whatGrp, "gain", path)
-  let offset = readAttrF64(whatGrp, "offset", path)
-  let nodata = readAttrF64(whatGrp, "nodata", path)
-
-  let projdef = readAttrStr(whereGrp, "projdef", path)
-  let stationProj = parseProjdef(projdef)
-
-  let cornerKeys = [("LL_lon", "LL_lat"), ("LR_lon", "LR_lat"),
-                    ("UL_lon", "UL_lat"), ("UR_lon", "UR_lat")]
-  var
-    xmin = Inf
-    xmax = -Inf
-    ymin = Inf
-    ymax = -Inf
-  for (klon, klat) in cornerKeys:
-    let lon = readAttrF64(whereGrp, klon, path)
-    let lat = readAttrF64(whereGrp, klat, path)
-    let (x, y) = stationProj.forward(lat, lon)
-    xmin = min(xmin, x)
-    xmax = max(xmax, x)
-    ymin = min(ymin, y)
-    ymax = max(ymax, y)
+  let extent = projectionExtent(whereGrp, stationProj, path)
 
   let dset = h5f["dataset1/data1/data".dset_str]
+  let dbzData = readScaledDbz(dset, gain, offset, nodata, path)
+
   let shape = dset.shape
   let rows = shape[0]
   let cols = shape[1]
-  let dtypeKind = dset.dtypeAnyKind
-
-  var dbzData = newTensor[float32]([rows, cols])
-  case dtypeKind
-  of dkUInt8:
-    let raw = dset.read(uint8)
-    for i in 0 ..< rows:
-      for j in 0 ..< cols:
-        let v = raw[i * cols + j]
-        if float64(v) == nodata:
-          dbzData[i, j] = NaN.float32
-        else:
-          dbzData[i, j] = float32(gain * float64(v) + offset)
-  of dkInt16:
-    let raw = dset.read(int16)
-    for i in 0 ..< rows:
-      for j in 0 ..< cols:
-        let v = raw[i * cols + j]
-        if float64(v) == nodata:
-          dbzData[i, j] = NaN.float32
-        else:
-          dbzData[i, j] = float32(gain * float64(v) + offset)
-  else:
-    failH5(path, "unexpected dataset dtype: " & $dtypeKind)
 
   # ODIM_H5 IMAGE stores rows origin='upper' (row 0 = north/ymax).
   # We need ascending y for bilinear interp, so flip to row 0 = south.
@@ -187,13 +135,9 @@ proc readPseudoCappiStation*(path: string): PseudoCappiStation =
   var xIn = newSeq[float64](nx)
   var yIn = newSeq[float64](ny)
   for j in 0 ..< nx:
-    xIn[j] = xmin + (xmax - xmin) * float64(j) / float64(nx - 1)
+    xIn[j] = extent[0] + (extent[1] - extent[0]) * float64(j) / float64(nx - 1)
   for i in 0 ..< ny:
-    yIn[i] = ymin + (ymax - ymin) * float64(i) / float64(ny - 1)
+    yIn[i] = extent[2] + (extent[3] - extent[2]) * float64(i) / float64(ny - 1)
 
-  result = PseudoCappiStation(
-    dbz: flipped,
-    xIn: xIn,
-    yIn: yIn,
-    stationProj: stationProj,
-  )
+  result = PseudoCappiStation(dbz: flipped, xIn: xIn, yIn: yIn,
+                              stationProj: stationProj)

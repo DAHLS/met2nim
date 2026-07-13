@@ -4,31 +4,24 @@ import geo, config, httputil
 
 proc viewGeographicBbox*(proj: Projection, zoom: float64): tuple[w, s, e, n: float64] =
   let ext = proj.viewExtent(zoom)
-  let n = 50
-  var
-    lons: seq[float64] = @[]
-    lats: seq[float64] = @[]
-  for i in 0 ..< n:
-    let t = float64(i) / float64(n - 1)
-    lons.add(ext[0] + (ext[1] - ext[0]) * t)
-    lats.add(ext[2])
-    lons.add(ext[0] + (ext[1] - ext[0]) * t)
-    lats.add(ext[3])
-    lons.add(ext[0])
-    lats.add(ext[2] + (ext[3] - ext[2]) * t)
-    lons.add(ext[1])
-    lats.add(ext[2] + (ext[3] - ext[2]) * t)
+  const nSamples = 50
   var
     lonMin = Inf
     lonMax = -Inf
     latMin = Inf
     latMax = -Inf
-  for i in 0 ..< lons.len:
-    let (lat, lon) = proj.inverse(lons[i], lats[i])
-    lonMin = min(lonMin, lon)
-    lonMax = max(lonMax, lon)
-    latMin = min(latMin, lat)
-    latMax = max(latMax, lat)
+  # Sample the four edges of the projected view extent, inverse-project
+  # each point to lat/lon, and track the geographic bounding box.
+  for i in 0 ..< nSamples:
+    let t = float64(i) / float64(nSamples - 1)
+    let x = ext[0] + (ext[1] - ext[0]) * t
+    let y = ext[2] + (ext[3] - ext[2]) * t
+    for (px, py) in [(x, ext[2]), (x, ext[3]), (ext[0], y), (ext[1], y)]:
+      let (lat, lon) = proj.inverse(px, py)
+      lonMin = min(lonMin, lon)
+      lonMax = max(lonMax, lon)
+      latMin = min(latMin, lat)
+      latMax = max(latMax, lat)
   result.w = max(lonMin, -WmsExtentLimit)
   result.e = min(lonMax, WmsExtentLimit)
   result.s = max(latMin, -WmsExtentLimit)
@@ -54,6 +47,16 @@ proc fetchEumetsat*(layer: string, cadence: int,
 
   let pngData = httpGetBytes(url, 180000)
   result = decodeImage(pngData)
+  # Detect a fully-transparent response (e.g. imagery not yet available for
+  # the requested time). Raise so fetchSatellite can fall back to GIBS,
+  # mirroring the black-tile probe used for GIBS.
+  var anyOpaque = false
+  for px in result.data:
+    if px.a > 0:
+      anyOpaque = true
+      break
+  if not anyOpaque:
+    raise newException(ValueError, "EUMETSAT image is fully transparent")
 
 proc gibsProbeDate*(dateStr: string): bool =
   # Probe a small tile over central Europe to check if GIBS has real
@@ -61,7 +64,7 @@ proc gibsProbeDate*(dateStr: string): bool =
   # processing lag — tiles may exist but be entirely black.
   let probeBbox = "8.0,54.0,12.0,58.0"
   let url = &"{GibsWmsUrl}?service=WMS&request=GetMap&version=1.3.0" &
-            &"&layers={GobsLayer}&styles=&format=image/jpeg" &
+            &"&layers={GibsLayer}&styles=&format=image/jpeg" &
             &"&time={dateStr}&width=100&height=100" &
             &"&crs=CRS:84&bbox={probeBbox}"
   try:
@@ -91,11 +94,11 @@ proc fetchGibs*(proj: Projection, scanDt: Time, zoom: float64): Image =
     chosen = scanDt.utc().format("yyyy-MM-dd")
 
   let url = &"{GibsWmsUrl}?service=WMS&request=GetMap&version=1.3.0" &
-            &"&layers={GobsLayer}&styles=&format=image/jpeg" &
+            &"&layers={GibsLayer}&styles=&format=image/jpeg" &
             &"&time={chosen}&width={EumFetchW}&height={EumFetchH}" &
             &"&crs=CRS:84&bbox={bbox.w:.6f},{bbox.s:.6f},{bbox.e:.6f},{bbox.n:.6f}"
 
-  echo &"satellite: GIBS {GobsLayer} @ {chosen} ({EumFetchW}x{EumFetchH}, view {bbox.w:.1f},{bbox.s:.1f},{bbox.e:.1f},{bbox.n:.1f})"
+  echo &"satellite: GIBS {GibsLayer} @ {chosen} ({EumFetchW}x{EumFetchH}, view {bbox.w:.1f},{bbox.s:.1f},{bbox.e:.1f},{bbox.n:.1f})"
 
   let jpgData = httpGetBytes(url, 180000)
   result = decodeImage(jpgData)

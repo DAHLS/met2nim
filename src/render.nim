@@ -249,7 +249,7 @@ proc renderImage*(rf: RadarField, scanDt: string, args: RenderArgs): Image =
   result = canvas
 
 proc saveImage*(img: Image, outDir, scanStamp: string) =
-  discard existsOrCreateDir(outDir)
+  createDir(outDir)
   let outName = "radar_" & scanStamp & ".png"
   let outPath = outDir / outName
   img.writeFile(outPath)

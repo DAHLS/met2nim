@@ -1,4 +1,4 @@
-import std/[os, strutils, strformat, times, algorithm, sequtils, json, tables]
+import std/[os, strformat, times, algorithm, sequtils, json, tables]
 import geo, h5read, interp, config, httputil
 
 type
@@ -49,7 +49,11 @@ proc fetchNewestRadarSet*(collection: string, limit = 10): ScanInfo =
     except CatchableError:
       discard
 
-  # Sort by datetime descending; prefer the one with the most stations.
+  if byTime.len == 0:
+    raise newException(ValueError, "No radar files with a downloadable href in collection '" & collection & "'")
+
+  # Pick the scan time with the most stations. Iterate datetime keys in
+  # descending order (ISO-8601 sorts lexically) so ties favour the newest.
   var bestDt = ""
   var bestItems: seq[RadarItem] = @[]
   for dt in toSeq(byTime.keys).sorted(order = Descending):
@@ -57,21 +61,20 @@ proc fetchNewestRadarSet*(collection: string, limit = 10): ScanInfo =
     if bestItems.len == 0 or items.len > bestItems.len:
       bestDt = dt
       bestItems = items
-    # If the newest already has most stations, stop early.
-    if dt == bestDt and items.len >= max(1, byTime.len div 2 + 1):
-      break
 
   result.items = bestItems
   result.dtIso = bestDt
-  # Parse datetime.
-  let s = bestDt.replace("Z", "+00:00")
-  result.scanDt = parse(s, "yyyy-MM-dd'T'HH:mm:sszzz", utc()).toTime()
+  result.scanDt = parseIsoUtc(bestDt)
 
-proc scanStamp*(si: ScanInfo): string =
-  result = si.scanDt.format("yyyyMMdd-HHmm")
+proc cleanStaleTmp() =
+  # Remove leftover .h5.tmp files from a previous interrupted download.
+  for f in walkFiles(DataDir / "*.h5.tmp"):
+    try: removeFile(f)
+    except CatchableError: discard
 
 proc downloadAndCacheRadarSet*(si: ScanInfo): seq[string] =
   discard existsOrCreateDir(DataDir)
+  cleanStaleTmp()
   var
     h5Paths: seq[string] = @[]
     downloaded = false
@@ -96,10 +99,12 @@ proc downloadAndCacheRadarSet*(si: ScanInfo): seq[string] =
     if f.absolutePath notin keepSet:
       try: removeFile(f)
       except CatchableError: discard
+  cleanStaleTmp()
   result = h5Paths
 
 proc downloadAndCacheRadarSingle*(item: RadarItem): string =
   discard existsOrCreateDir(DataDir)
+  cleanStaleTmp()
   let radarPath = DataDir / item.fname
   if fileExists(radarPath):
     echo "Newest radar already cached; skipping download."
@@ -114,6 +119,7 @@ proc downloadAndCacheRadarSingle*(item: RadarItem): string =
     if f != radarPath:
       try: removeFile(f)
       except CatchableError: discard
+  cleanStaleTmp()
   result = radarPath
 
 proc parseRadarField*(paths: seq[string], collection: CollectionKind): RadarField =

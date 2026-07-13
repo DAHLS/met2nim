@@ -1,8 +1,11 @@
-import std/[strutils, strformat, times, math, tables, json]
+import std/[strformat, times, math, tables, json]
 import geo, config, httputil
 
 type
   WindStation* = tuple[lon, lat, dirFrom, speed: float64]
+
+proc acceptValue*(n: JsonNode): bool =
+  n != nil and n.kind in {JFloat, JInt}
 
 proc fetchWindAt*(scanDt: Time, windowMinutes = 10): seq[WindStation] =
   let
@@ -26,32 +29,36 @@ proc fetchWindAt*(scanDt: Time, windowMinutes = 10): seq[WindStation] =
   for f in sfeats:
     let p = f{"properties"}
     if p == nil: continue
-    let v = p{"value"}
-    if v == nil or v.kind != JFloat: continue
-    let sid = p["stationId"].getStr()
-    let obsStr = p["observed"].getStr().replace("Z", "+00:00")
-    let t = parse(obsStr, "yyyy-MM-dd'T'HH:mm:sszzz", utc())
-    let delta = abs((t.toTime() - scanDt).inSeconds)
+    if not acceptValue(p{"value"}): continue
+    let sidNode = p{"stationId"}
+    let obsNode = p{"observed"}
+    if sidNode == nil or obsNode == nil: continue
+    let sid = sidNode.getStr()
+    let obsStr = obsNode.getStr()
+    let t = parseIsoUtc(obsStr)
+    let delta = abs((t - scanDt).inSeconds)
     if sid notin spdBy or delta < spdBy[sid].delta:
-      spdBy[sid] = (delta, v.getFloat())
+      spdBy[sid] = (delta, p{"value"}.getFloat())
 
   # Direction: nearest observation per station.
   var dirBest: Table[string, tuple[delta: int64, dirFrom, lon, lat: float64]] = initTable[string, tuple[delta: int64, dirFrom, lon, lat: float64]]()
   for f in dfeats:
     let p = f{"properties"}
     if p == nil: continue
-    let v = p{"value"}
-    if v == nil or v.kind != JFloat: continue
-    let sid = p["stationId"].getStr()
+    if not acceptValue(p{"value"}): continue
+    let sidNode = p{"stationId"}
+    let obsNode = p{"observed"}
+    if sidNode == nil or obsNode == nil: continue
+    let sid = sidNode.getStr()
     let coords = f{"geometry"}{"coordinates"}
     if coords == nil or coords.len < 2: continue
     let lon = coords[0].getFloat()
     let lat = coords[1].getFloat()
-    let obsStr = p["observed"].getStr().replace("Z", "+00:00")
-    let t = parse(obsStr, "yyyy-MM-dd'T'HH:mm:sszzz", utc())
-    let delta = abs((t.toTime() - scanDt).inSeconds)
+    let obsStr = obsNode.getStr()
+    let t = parseIsoUtc(obsStr)
+    let delta = abs((t - scanDt).inSeconds)
     if sid notin dirBest or delta < dirBest[sid].delta:
-      dirBest[sid] = (delta, v.getFloat(), lon, lat)
+      dirBest[sid] = (delta, p{"value"}.getFloat(), lon, lat)
 
   for sid, d in dirBest:
     if sid in spdBy:

@@ -1,4 +1,4 @@
-import std/[math]
+import std/[math, times, strutils]
 
 const
   DmiRadarApi* = "https://opendataapi.dmi.dk/v1/radardata"
@@ -15,7 +15,7 @@ const
   WmsExtentLimit* = 77.0
 
   GibsWmsUrl* = "https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi"
-  GobsLayer* = "MODIS_Terra_CorrectedReflectance_TrueColor"
+  GibsLayer* = "MODIS_Terra_CorrectedReflectance_TrueColor"
 
   DataDir* = "data"
 
@@ -122,3 +122,10 @@ proc defaultConfig*(): AppConfig =
   result.despeckle = false
   result.zoom = 1.0
   result.fontPath = ""
+
+proc parseIsoUtc*(s: string): Time =
+  ## Parse an ISO-8601 timestamp (with trailing 'Z' or a numeric offset)
+  ## into a UTC `Time`. Handles the `...Z` form used by the DMI/EUMETSAT
+  ## APIs by rewriting it to `+00:00` before `parse`.
+  let t = s.replace("Z", "+00:00")
+  result = parse(t, "yyyy-MM-dd'T'HH:mm:sszzz", utc()).toTime()

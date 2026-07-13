@@ -38,8 +38,11 @@ proc parseCli(): AppConfig =
       let eq = a.find('=')
       let key = if eq > 0: a[2 ..< eq] else: a[2 .. ^1]
       let needsVal = key in ["outdir", "collection", "sat-source", "min-dbz", "zoom", "font"]
+      if eq <= 0 and needsVal and i + 1 >= args.len:
+        stderr.writeLine(&"error: --{key} requires a value")
+        quit(1)
       let val = if eq > 0: a[eq + 1 .. ^1]
-                elif needsVal and i + 1 < args.len:
+                elif needsVal:
                   inc i; args[i]
                 else: ""
       case key
@@ -78,6 +81,16 @@ proc parseCli(): AppConfig =
       quit(0)
     inc i
 
+  if math.isNaN(result.zoom) or result.zoom <= 0.0:
+    stderr.writeLine("error: --zoom must be a positive number")
+    quit(1)
+  if math.isNaN(result.minDbz):
+    stderr.writeLine("error: --min-dbz must be a finite number")
+    quit(1)
+  if result.outDir.len == 0:
+    stderr.writeLine("error: --outdir must not be empty")
+    quit(1)
+
 proc main() =
   let cfg = parseCli()
 
@@ -103,8 +116,7 @@ proc main() =
     else:
       let item = fetchNewestRadar(collectionName)
       dtIso = item.dtIso
-      let s = dtIso.replace("Z", "+00:00")
-      scanDt = parse(s, "yyyy-MM-dd'T'HH:mm:sszzz", utc()).toTime()
+      scanDt = parseIsoUtc(item.dtIso)
       echo &"  newest: {item.fname}  ({scanDt.utc.format(\"yyyy-MM-dd HH:mm 'UTC'\")})"
       h5Paths = @[downloadAndCacheRadarSingle(item)]
   except CatchableError as e:
@@ -137,9 +149,12 @@ proc main() =
       echo &"Fetching wind observations near {scanDt.utc.format(\"HH:mm 'UTC'\")}..."
       try:
         windStations = fetchWindAt(scanDt)
-        discard existsOrCreateDir(DataDir)
-        saveWindCache(windPath, windStations)
-        echo &"  {windStations.len} stations with wind_dir+wind_speed (cached)"
+        if windStations.len > 0:
+          discard existsOrCreateDir(DataDir)
+          saveWindCache(windPath, windStations)
+          echo &"  {windStations.len} stations with wind_dir+wind_speed (cached)"
+        else:
+          echo "  no wind observations found (not cached)"
       except CatchableError as e:
         stderr.writeLine(&"  warning: wind fetch failed ({e.msg})")
       # Clean up old wind JSON files.
