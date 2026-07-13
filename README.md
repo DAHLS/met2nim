@@ -81,7 +81,7 @@ Output: `radar_YYYYMMDD-HHMM.png` (UTC timestamp from radar scan time)
 | `--despeckle` | — | Remove isolated single-pixel echoes (3×3 median filter) |
 | `--font PATH` | embedded | Use a specific `.ttf`/`.otf` font for wind labels (default: bundled DejaVuSans-Bold) |
 
-Both `--flag value` and `--flag=value` forms are accepted.
+Both `--flag value` and `--flag=value` forms are accepted. Value-taking flags error out if no value is supplied. `--zoom` must be positive and `--min-dbz` must be a finite number; `--outdir` is created recursively (parent directories included).
 
 ### Satellite sources
 
@@ -91,14 +91,14 @@ Both `--flag value` and `--flag=value` forms are accepted.
 - **gibs-modis** — MODIS Terra true-color, ~250 m resolution, daily morning overpass (~09 UTC). Razor-sharp but clouds may not match the radar scan time. GIBS has a ~24h processing lag; the tool probes the date and steps back up to 3 days to find the most recent day with real (non-black) tiles.
 - **none** — No satellite background (black canvas with radar + coastlines + wind).
 
-When an EUMETSAT source fails (e.g. true-color at night returns an empty/transparent image), the tool automatically falls back to GIBS daily MODIS.
+When an EUMETSAT source fails or returns a fully transparent image (e.g. true-color at night), the tool detects this explicitly and falls back to GIBS daily MODIS.
 
 ### Build flags
 
 The build script (`build.sh`) compiles with:
 
 ```bash
-nim c -d:danger -d:H5_FUTURE -d:ssl -o:met2img src/met2img.nim
+nim c -d:release -d:H5_FUTURE -d:ssl -o:met2img src/met2img.nim
 ```
 
 | Flag | Why |
@@ -117,8 +117,8 @@ nim c -d:danger -d:H5_FUTURE -d:ssl -o:met2img src/met2img.nim
 
 Downloaded DMI data is stored in a `data/` folder and reused on subsequent runs:
 
-- **Radar** — `.h5` files are kept in `data/`. DMI filenames encode the scan timestamp, so an identical filename means identical data. If the cached file matches the newest available from the API, the download is skipped.
-- **Wind** — `wind_<scanstamp>.json` is saved alongside the radar file, keyed to the same scan timestamp.
+- **Radar** — `.h5` files are kept in `data/`. DMI filenames encode the scan timestamp, so an identical filename means identical data. If the cached file matches the newest available from the API, the download is skipped. Leftover `.h5.tmp` files from interrupted downloads are cleaned up on each run.
+- **Wind** — `wind_<scanstamp>.json` is saved alongside the radar file, keyed to the same scan timestamp. An empty result (no observations found) is not cached, so a transient API failure won't poison future runs for the same scan time.
 - **Cleanup** — old `.h5` and `wind_*.json` files are deleted only after the new radar file has been written successfully, so a failed download never leaves `data/` empty.
 
 ## Deployment
@@ -174,7 +174,7 @@ sudo ln -s libhdf5.so.310 /usr/lib/libhdf5.so
 
 The 32-bit binary requires the corresponding 32-bit runtime libraries on the target machine (`libhdf5.so`, `libopenblas.so`, `libatomic.so`, `libssl.so`, and 32-bit glibc).
 
-**Why the extra flags?** Nim's `nim.cfg` has cross-compiler entries for ARM and RISC-V but not for i386-on-amd64. The build script passes `--cpu:i386` (Nim generates 32-bit code), `--gcc.options.always:"-m32"` (gcc produces 32-bit objects), and `--passL:"-m32"` (linker produces a 32-bit binary). On a native 32-bit system, these flags are unnecessary — a plain `nim c` produces 32-bit code by default.
+**Why the extra flags?** Nim's `nim.cfg` has cross-compiler entries for ARM and RISC-V but not for i386-on-amd64. The build script passes `--cpu:i386` (Nim generates 32-bit code), `--passC:"-m32"` (gcc produces 32-bit objects), and `--passL:"-m32"` (linker produces a 32-bit binary). Each target also gets its own `--nimcache` directory to avoid mixing 32/64-bit object files between builds. On a native 32-bit system, these flags are unnecessary — a plain `nim c` produces 32-bit code by default.
 
 ## Project organization
 
@@ -194,7 +194,7 @@ met2nim/
 │   ├── coast.nim       # GeoJSON coastline loader + renderer
 │   ├── render.nim      # Compositing pipeline (pixie canvas)
 │   └── httputil.nim    # Shared HTTP helpers (GET json/bytes)
-├── met2img.nimble      # Nimble package file (declares deps, srcDir = "src")
+├── met2img.nimble      # Nimble package file (deps, bin target, test task, srcDir = "src")
 ├── build.sh            # Build script
 ├── fonts/              # Bundled DejaVuSans-Bold.ttf (build-time only, embedded via staticRead)
 ├── coast.geojson       # Coastline data (build-time only, embedded via staticRead)
