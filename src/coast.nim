@@ -47,8 +47,7 @@ proc drawCoastlines*(ctx: Context, lines: seq[Coastline], proj: Projection,
     var added = 0
     for pt in line:
       let (px, py) = proj.forward(pt[1], pt[0])
-      let cx = float32((px - viewExt[0]) / dx * float64(canvasW))
-      let cy = float32((viewExt[3] - py) / dy * float64(canvasH))
+      let (cx, cy) = toCanvasPx(viewExt, px, py, canvasW, canvasH)
       if added == 0:
         ctx.moveTo(cx, cy)
       else:

@@ -1,9 +1,9 @@
-import std/[math, strformat, os, algorithm]
+import std/[math, strformat, os, algorithm, times]
 import pixie
 import arraymancer
-import geo, config, h5read, wind, coast
+import geo, config, h5read, wind, coast, lightning
 
-const embeddedFontBytes* = staticRead("../fonts/DejaVuSans-Bold.ttf")
+const embeddedFontBytes = staticRead("../fonts/DejaVuSans-Bold.ttf")
 
 proc loadWindFont*(overridePath: string): Font =
   ## Returns the embedded DejaVuSans-Bold font, or a user-supplied font
@@ -16,10 +16,10 @@ proc loadWindFont*(overridePath: string): Font =
         newFont(parseTtf(embeddedFontBytes))
     else:
       newFont(parseTtf(embeddedFontBytes))
-  result.size = 22.0
+  result.size = WindFontSize
 
-proc cleanRadar*(dbz: Tensor[float32], minDbz: float32,
-                 despeckle: bool): Tensor[float32] =
+proc cleanRadar(dbz: Tensor[float32], minDbz: float32,
+                despeckle: bool): Tensor[float32] =
   result = dbz.map(proc(x: float32): float32 =
     if x != x or x < minDbz: NaN.float32 else: x)
   if not despeckle:
@@ -55,6 +55,7 @@ type
   RenderArgs* = object
     useSatellite*: bool
     useWind*: bool
+    useLightning*: bool
     zoom*: float64
     minDbz*: float32
     despeckle*: bool
@@ -63,20 +64,17 @@ type
     coastlines*: seq[Coastline]
     windArrows*: seq[WindArrow]
     windFont*: Font
+    lightningStrikes*: seq[LightningStrike]
+    scanTime*: Time         # reference time for lightning age/opacity
 
-proc projToCanvas*(viewExt: Extent, x, y: float64,
-                   canvasW, canvasH: int): tuple[px, py: float32] =
-  let dx = viewExt[1] - viewExt[0]
-  let dy = viewExt[3] - viewExt[2]
-  result.px = float32((x - viewExt[0]) / dx * float64(canvasW))
-  result.py = float32((viewExt[3] - y) / dy * float64(canvasH))
-
-proc canvasToProj*(viewExt: Extent, px, py: float32,
-                   canvasW, canvasH: int): tuple[x, y: float64] =
-  let dx = viewExt[1] - viewExt[0]
-  let dy = viewExt[3] - viewExt[2]
-  result.x = viewExt[0] + float64(px) / float64(canvasW) * dx
-  result.y = viewExt[3] - float64(py) / float64(canvasH) * dy
+proc blendSrcOver(canvas: Image, px, py: int, src: ColorRGBA) =
+  # Alpha blend src over dest, writing opaque (a=255) to the canvas.
+  let dest = canvas[px, py]
+  let af = float(src.a) / 255.0
+  let dr = uint8(float(dest.r) * (1.0 - af) + float(src.r) * af + 0.5)
+  let dg = uint8(float(dest.g) * (1.0 - af) + float(src.g) * af + 0.5)
+  let db = uint8(float(dest.b) * (1.0 - af) + float(src.b) * af + 0.5)
+  canvas[px, py] = rgba(dr, dg, db, 255)
 
 proc renderRadarOverlay*(canvas: Image, rf: RadarField, viewExt: Extent,
                          minDbz: float32, despeckle: bool) =
@@ -116,17 +114,9 @@ proc renderRadarOverlay*(canvas: Image, rf: RadarField, viewExt: Extent,
       let c = dbzToRgba(v)
       if c[3] <= 0.0:
         continue
-      let r = uint8(c[0] * 255.0 + 0.5)
-      let g = uint8(c[1] * 255.0 + 0.5)
-      let b = uint8(c[2] * 255.0 + 0.5)
-      let a = uint8(c[3] * 255.0 + 0.5)
-      let dest = canvas[px, py]
-      # Alpha blend: src over dest.
-      let af = float(a) / 255.0
-      let dr = uint8(float(dest.r) * (1.0 - af) + float(r) * af + 0.5)
-      let dg = uint8(float(dest.g) * (1.0 - af) + float(g) * af + 0.5)
-      let db = uint8(float(dest.b) * (1.0 - af) + float(b) * af + 0.5)
-      canvas[px, py] = rgba(dr, dg, db, 255)
+      let src = rgba(uint8(c[0] * 255.0 + 0.5), uint8(c[1] * 255.0 + 0.5),
+                     uint8(c[2] * 255.0 + 0.5), uint8(c[3] * 255.0 + 0.5))
+      canvas.blendSrcOver(px, py, src)
 
 proc renderSatelliteBackground*(canvas: Image, satImg: Image,
                                 satBbox: tuple[w, s, e, n: float64],
@@ -169,12 +159,7 @@ proc renderSatelliteBackground*(canvas: Image, satImg: Image,
       let src = satImg[sCol, sRow]
       if src.a == 0:
         continue
-      let dest = canvas[px, py]
-      let af = float(src.a) / 255.0
-      let dr = uint8(float(dest.r) * (1.0 - af) + float(src.r) * af + 0.5)
-      let dg = uint8(float(dest.g) * (1.0 - af) + float(src.g) * af + 0.5)
-      let db = uint8(float(dest.b) * (1.0 - af) + float(src.b) * af + 0.5)
-      canvas[px, py] = rgba(dr, dg, db, 255)
+      canvas.blendSrcOver(px, py, src)
 
 proc renderWindArrows*(ctx: contexts.Context, proj: Projection, viewExt: Extent,
                        arrows: seq[WindArrow], windFont: Font) =
@@ -183,18 +168,15 @@ proc renderWindArrows*(ctx: contexts.Context, proj: Projection, viewExt: Extent,
   let (x0, y0, x1, y1, fx, fy) = arrowEndpoints(proj, arrows)
   let polys = arrowPolygons(x0, y0, x1, y1, fx, fy)
   let
-    cw = ctx.image.width.float32
-    ch = ctx.image.height.float32
-    vDx = float32(viewExt[1] - viewExt[0])
-    vDy = float32(viewExt[3] - viewExt[2])
+    cw = ctx.image.width
+    ch = ctx.image.height
   # Fill arrows.
   ctx.fillStyle = color(ArrowColorR, ArrowColorG, ArrowColorB, ArrowColorA)
   for i, poly in polys:
     ctx.beginPath()
     var started = false
     for v in poly:
-      let px = float32((v[0] - viewExt[0]) / float64(vDx) * float64(cw))
-      let py = float32((viewExt[3] - v[1]) / float64(vDy) * float64(ch))
+      let (px, py) = toCanvasPx(viewExt, v[0], v[1], cw, ch)
       if not started:
         ctx.moveTo(px, py)
         started = true
@@ -209,20 +191,53 @@ proc renderWindArrows*(ctx: contexts.Context, proj: Projection, viewExt: Extent,
   for i, a in arrows:
     let mx = (x0[i] + x1[i]) / 2.0
     let my = (y0[i] + y1[i]) / 2.0
-    let px = float32((mx - viewExt[0]) / float64(vDx) * float64(cw))
-    let py = float32((viewExt[3] - my) / float64(vDy) * float64(ch))
+    let (px, py) = toCanvasPx(viewExt, mx, my, cw, ch)
     let label = $int(a.speed)
     let t = translate(vec2(px, py))
     # White stroke (outline) drawn first.
     windFont.paint = rgba(255, 255, 255, 255)
     ctx.image.strokeText(windFont, label, t,
-      strokeWidth = 3.0, hAlign = CenterAlign, vAlign = MiddleAlign)
+      strokeWidth = WindLabelStrokeWidth, hAlign = CenterAlign, vAlign = MiddleAlign)
     # Black fill on top.
     windFont.paint = rgba(0, 0, 0, 255)
     ctx.image.fillText(windFont, label, t,
       hAlign = CenterAlign, vAlign = MiddleAlign)
 
-proc renderImage*(rf: RadarField, scanDt: string, args: RenderArgs): Image =
+proc renderLightning*(ctx: contexts.Context, proj: Projection, viewExt: Extent,
+                      strikes: seq[LightningStrike], scanTime: Time) =
+  if strikes.len == 0:
+    return
+  let
+    cw = ctx.image.width
+    ch = ctx.image.height
+  # lineWidth is constant per strike; hoist out of the loop (fillStyle /
+  # strokeStyle can't be hoisted — the aged alpha varies per strike).
+  ctx.lineWidth = LightningOutlineWidth
+  # One beginPath per strike: pixie accumulates subpaths without it, causing
+  # both opacity stacking and redundant redraws (see README pixie note).
+  for s in strikes:
+    let ageH = (scanTime - s.observed).inHours.float64
+    let op = lightningOpacity(ageH)
+    if op <= 0.0:
+      continue
+    let (px, py) = proj.forward(s.lat, s.lon)
+    let (cx, cy) = toCanvasPx(viewExt, px, py, cw, ch)
+    # 4-vertex diamond: top, right, bottom, left.
+    ctx.beginPath()
+    ctx.moveTo(cx, cy - LightningDiamondR)
+    ctx.lineTo(cx + LightningDiamondR, cy)
+    ctx.lineTo(cx, cy + LightningDiamondR)
+    ctx.lineTo(cx - LightningDiamondR, cy)
+    ctx.closePath()
+    # Fill (bright red, aged alpha), then stroke (thin black, same aged alpha
+    # so outline and body fade together).
+    ctx.fillStyle = color(LightningFillR, LightningFillG, LightningFillB, op)
+    ctx.strokeStyle = color(LightningOutlineR, LightningOutlineG,
+                            LightningOutlineB, op)
+    ctx.fill()
+    ctx.stroke()
+
+proc renderImage*(rf: RadarField, args: RenderArgs): Image =
   let proj = rf.proj
   let viewExt = proj.viewExtent(args.zoom)
   let canvas = newImage(CanvasW, CanvasH)
@@ -245,6 +260,12 @@ proc renderImage*(rf: RadarField, scanDt: string, args: RenderArgs): Image =
     let ctx = newContext(canvas)
     renderWindArrows(ctx, proj, viewExt, args.windArrows, args.windFont)
     echo &"plotted {args.windArrows.len} wind arrows"
+
+  # 5. Lightning (drawn last/topmost so the small markers stay visible).
+  if args.useLightning and args.lightningStrikes.len > 0:
+    let ctx = newContext(canvas)
+    renderLightning(ctx, proj, viewExt, args.lightningStrikes, args.scanTime)
+    echo &"plotted {args.lightningStrikes.len} lightning strikes"
 
   result = canvas
 

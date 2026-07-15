@@ -7,6 +7,9 @@ const
   Wgs84B* = Wgs84A * (1.0 - Wgs84F)
   Wgs84E2* = 2.0 * Wgs84F - Wgs84F * Wgs84F # eccentricity squared
   Wgs84E* = sqrt(Wgs84E2)
+  VincentyMaxIter* = 100       # iteration cap for Vincenty solvers
+  VincentyEps* = 1e-12        # convergence threshold for Vincenty solvers
+  InvProjRhoEps* = 1e-10      # rho-below-this = at projection center
 
 type
   ProjectionKind* = enum
@@ -99,7 +102,7 @@ proc inverse*(p: Projection, x, y: float64): tuple[lat, lon: float64] =
   case p.kind
   of pkStere:
     let chi0 = p.chi0Rad
-    if rho < 1e-10:
+    if rho < InvProjRhoEps:
       result.lat = p.lat0
       result.lon = p.lon0
       return
@@ -113,7 +116,7 @@ proc inverse*(p: Projection, x, y: float64): tuple[lat, lon: float64] =
     result.lon = radToDeg(lam)
   of pkGnom:
     let phi0 = p.phi0Rad
-    if rho < 1e-10:
+    if rho < InvProjRhoEps:
       result.lat = p.lat0
       result.lon = p.lon0
       return
@@ -129,8 +132,17 @@ proc inverse*(p: Projection, x, y: float64): tuple[lat, lon: float64] =
 proc viewExtent*(p: Projection, zoom: float64): Extent =
   let (cx, cy) = p.forward(CenterLat, CenterLon)
   let w = BaseWidthM / zoom
-  let h = w * 3.0 / 4.0
+  let h = w * float64(CanvasH) / float64(CanvasW)
   result = (cx - w / 2.0, cx + w / 2.0, cy - h / 2.0, cy + h / 2.0)
+
+proc toCanvasPx*(viewExt: Extent, x, y: float64,
+                 canvasW, canvasH: int): tuple[cx, cy: float32] =
+  ## Project-view metres → canvas pixels. Row 0 = north (ymax → y=0).
+  ## Callers must guard against degenerate extents (dx/dy ≤ 0).
+  let dx = viewExt[1] - viewExt[0]
+  let dy = viewExt[3] - viewExt[2]
+  result.cx = float32((x - viewExt[0]) / dx * float64(canvasW))
+  result.cy = float32((viewExt[3] - y) / dy * float64(canvasH))
 
 # --- Vincenty geodesic ---
 
@@ -154,7 +166,7 @@ proc vincentyInverse*(lon1, lat1, lon2, lat2: float64): tuple[az, baz, dist: flo
     sigma = 0.0
     cosSqAlpha = 1.0
     cos2SigmaM = 1.0
-  for iter in 0 ..< 100:
+  for iter in 0 ..< VincentyMaxIter:
     let sinLambda = sin(lambda)
     let cosLambda = cos(lambda)
     sinSigma = sqrt((cosU2 * sinLambda) * (cosU2 * sinLambda) +
@@ -174,7 +186,7 @@ proc vincentyInverse*(lon1, lat1, lon2, lat2: float64): tuple[az, baz, dist: flo
     lambdaP = lambda
     lambda = l + (1.0 - c) * f * sinAlpha *
              (sigma + c * sinSigma * (cos2SigmaM + c * cosSigma * (-1.0 + 2.0 * cos2SigmaM * cos2SigmaM)))
-    if abs(lambda - lambdaP) < 1e-12:
+    if abs(lambda - lambdaP) < VincentyEps:
       break
   let uSq = cosSqAlpha * (a * a - b * b) / (b * b)
   let bigA = 1.0 + uSq / 16384.0 * (4096.0 + uSq * (-768.0 + uSq * (320.0 - 175.0 * uSq)))
@@ -214,14 +226,14 @@ proc vincentyForward*(lon, lat, az, dist: float64): tuple[lon2, lat2: float64] =
     cos2SigmaM = 0.0
     sinSigma = 0.0
     cosSigma = 1.0
-  for iter in 0 ..< 100:
+  for iter in 0 ..< VincentyMaxIter:
     cos2SigmaM = cos(2.0 * sigma1 + sigma)
     sinSigma = sin(sigma)
     cosSigma = cos(sigma)
     let deltaSigma = bigB * sinSigma * (cos2SigmaM + bigB / 4.0 * (cosSigma * (-1.0 + 2.0 * cos2SigmaM * cos2SigmaM) - bigB / 6.0 * cos2SigmaM * (-3.0 + 4.0 * sinSigma * sinSigma) * (-3.0 + 4.0 * cos2SigmaM * cos2SigmaM)))
     sigmaP = sigma
     sigma = dist / (b * bigA) + deltaSigma
-    if abs(sigma - sigmaP) < 1e-12:
+    if abs(sigma - sigmaP) < VincentyEps:
       break
   let tmp = sinU1 * sinSigma - cosU1 * cosSigma * cosAlpha1
   let phi2 = arctan2(sinU1 * cosSigma + cosU1 * sinSigma * cosAlpha1,

@@ -1,6 +1,6 @@
 import std/[os, strutils, strformat, times, math]
 import arraymancer, pixie
-import config, h5read, radar, wind, sat, coast, render
+import config, h5read, radar, wind, sat, coast, render, lightning
 
 const coastData = staticRead("../coast.geojson")
 
@@ -16,6 +16,7 @@ Options:
                       eumetsat-msg, gibs-modis, none
   --no-satellite      Skip satellite background (shortcut for --sat-source none)
   --no-wind           Skip wind arrows
+  --no-lightning      Skip lightning markers
   --min-dbz N         Mask radar echoes below N dBZ (default 10)
   --font PATH         Use a specific .ttf/.otf font file (default: embedded)
   --despeckle         Remove isolated single-pixel echoes
@@ -66,6 +67,7 @@ proc parseCli(): AppConfig =
           echo "Unknown sat-source: " & val
           quit(1)
       of "no-wind": result.noWind = true
+      of "no-lightning": result.noLightning = true
       of "min-dbz": result.minDbz = parseF("min-dbz", val)
       of "font": result.fontPath = val
       of "despeckle": result.despeckle = true
@@ -102,20 +104,17 @@ proc main() =
   var
     h5Paths: seq[string]
     scanDt: Time
-    dtIso: string
 
   try:
     if multiStation:
       let si = fetchNewestRadarSet(collectionName)
       scanDt = si.scanDt
-      dtIso = si.dtIso
       echo &"  newest: {si.items.len} stations @ {scanDt.utc.format(\"yyyy-MM-dd HH:mm 'UTC'\")}"
       for item in si.items:
         echo "    " & item.fname
       h5Paths = downloadAndCacheRadarSet(si)
     else:
       let item = fetchNewestRadar(collectionName)
-      dtIso = item.dtIso
       scanDt = parseIsoUtc(item.dtIso)
       echo &"  newest: {item.fname}  ({scanDt.utc.format(\"yyyy-MM-dd HH:mm 'UTC'\")})"
       h5Paths = @[downloadAndCacheRadarSingle(item)]
@@ -168,6 +167,16 @@ proc main() =
 
   let windFont = loadWindFont(cfg.fontPath)
 
+  # Lightning data (rolling 24h cache, anchored to the radar scan time).
+  var lightningStrikes: seq[LightningStrike] = @[]
+  if not cfg.noLightning:
+    echo &"Acquiring lightning (window {LightningWindowHours:.0f}h up to {scanDt.utc.format(\"HH:mm 'UTC'\")})..."
+    try:
+      lightningStrikes = acquireLightning(scanDt)
+      echo &"  {lightningStrikes.len} strikes in window"
+    except CatchableError as e:
+      stderr.writeLine(&"  warning: lightning acquire failed ({e.msg})")
+
   # Satellite.
   var
     satImg: Image = nil
@@ -185,6 +194,7 @@ proc main() =
   let renderArgs = RenderArgs(
     useSatellite: satSource != ssNone and not satImg.isNil,
     useWind: not cfg.noWind,
+    useLightning: not cfg.noLightning,
     zoom: cfg.zoom,
     minDbz: cfg.minDbz,
     despeckle: cfg.despeckle,
@@ -193,8 +203,10 @@ proc main() =
     coastlines: coastlines,
     windArrows: windArrows,
     windFont: windFont,
+    lightningStrikes: lightningStrikes,
+    scanTime: scanDt,
   )
-  let img = renderImage(rf, dtIso, renderArgs)
+  let img = renderImage(rf, renderArgs)
   saveImage(img, cfg.outDir, stamp)
 
 main()

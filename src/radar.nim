@@ -9,7 +9,7 @@ type
     scanDt*: Time       # UTC
     dtIso*: string
 
-proc extractFeature*(f: JsonNode): RadarItem =
+proc extractFeature(f: JsonNode): RadarItem =
   let idNode = f{"id"}
   if idNode == nil or idNode.kind != JString:
     raise newException(ValueError, "radar feature missing required 'id' field")
@@ -86,7 +86,7 @@ proc downloadAndCacheRadarSet*(si: ScanInfo): seq[string] =
     if not downloaded:
       echo "Downloading radar files..."
       downloaded = true
-    let data = httpGetBytes(item.href, 180000)
+    let data = httpGetBytes(item.href, RadarFetchTimeoutMs)
     let tmp = radarPath & ".tmp"
     writeFile(tmp, data)
     moveFile(tmp, radarPath)
@@ -110,7 +110,7 @@ proc downloadAndCacheRadarSingle*(item: RadarItem): string =
     echo "Newest radar already cached; skipping download."
     return radarPath
   echo "Downloading radar file..."
-  let data = httpGetBytes(item.href, 180000)
+  let data = httpGetBytes(item.href, RadarFetchTimeoutMs)
   let tmp = radarPath & ".tmp"
   writeFile(tmp, data)
   moveFile(tmp, radarPath)

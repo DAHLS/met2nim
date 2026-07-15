@@ -35,7 +35,7 @@ proc fetchEumetsat*(layer: string, cadence: int,
     seconds = dt.second,
     nanoseconds = dt.nanosecond,
   )
-  let tIso = snapped.utc.format("yyyy-MM-dd'T'HH:mm:ss'Z'")
+  let tIso = formatIsoUtc(snapped)
   let bbox = viewGeographicBbox(proj, zoom)
 
   let url = &"{EumWmsUrl}?service=WMS&request=GetMap&version=1.3.0" &
@@ -45,7 +45,7 @@ proc fetchEumetsat*(layer: string, cadence: int,
 
   echo &"satellite: EUMETSAT {layer} @ {tIso} ({EumFetchW}x{EumFetchH}, view {bbox.w:.1f},{bbox.s:.1f},{bbox.e:.1f},{bbox.n:.1f})"
 
-  let pngData = httpGetBytes(url, 180000)
+  let pngData = httpGetBytes(url, SatFetchTimeoutMs)
   result = decodeImage(pngData)
   # Detect a fully-transparent response (e.g. imagery not yet available for
   # the requested time). Raise so fetchSatellite can fall back to GIBS,
@@ -68,7 +68,7 @@ proc gibsProbeDate*(dateStr: string): bool =
             &"&time={dateStr}&width=100&height=100" &
             &"&crs=CRS:84&bbox={probeBbox}"
   try:
-    let jpgData = httpGetBytes(url, 30000)
+    let jpgData = httpGetBytes(url, GibsProbeTimeoutMs)
     let img = decodeImage(jpgData)
     # Check if image is entirely black (max pixel == 0).
     for px in img.data:
@@ -100,7 +100,7 @@ proc fetchGibs*(proj: Projection, scanDt: Time, zoom: float64): Image =
 
   echo &"satellite: GIBS {GibsLayer} @ {chosen} ({EumFetchW}x{EumFetchH}, view {bbox.w:.1f},{bbox.s:.1f},{bbox.e:.1f},{bbox.n:.1f})"
 
-  let jpgData = httpGetBytes(url, 180000)
+  let jpgData = httpGetBytes(url, SatFetchTimeoutMs)
   result = decodeImage(jpgData)
 
 proc fetchSatellite*(source: SatSource, proj: Projection,

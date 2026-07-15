@@ -11,9 +11,7 @@ proc fetchWindAt*(scanDt: Time, windowMinutes = 10): seq[WindStation] =
   let
     lo = scanDt - initDuration(minutes = windowMinutes)
     hi = scanDt + initDuration(minutes = windowMinutes)
-  let loStr = lo.utc.format("yyyy-MM-dd'T'HH:mm:ss'Z'")
-  let hiStr = hi.utc.format("yyyy-MM-dd'T'HH:mm:ss'Z'")
-  let dtRange = loStr & "/" & hiStr
+  let dtRange = formatIsoUtc(lo) & "/" & formatIsoUtc(hi)
 
   proc fetch(param: string): JsonNode =
     let url = &"{DmiMetObsApi}/collections/observation/items?parameterId={param}&datetime={dtRange}&bbox={WindBbox}&limit={WindFetchLimit}"
@@ -93,10 +91,10 @@ proc assignWindToSites*(stations: seq[WindStation], sites: openArray[WindSite]):
 # --- Arrow geometry (in projection metres) ---
 
 type
-  ArrowGeom* = seq[tuple[x, y: float64]]  # 7-vertex polygon in projection metres
+  ArrowGeom = seq[tuple[x, y: float64]]  # 7-vertex polygon in projection metres
 
 proc arrowEndpoints*(proj: Projection, arrows: seq[WindArrow],
-                     lengthM = 41000.0): tuple[x0, y0, x1, y1, fx, fy: seq[float64]] =
+                     lengthM = ArrowLengthM): tuple[x0, y0, x1, y1, fx, fy: seq[float64]] =
   let n = arrows.len
   result.x0 = newSeq[float64](n)
   result.y0 = newSeq[float64](n)

@@ -3,6 +3,7 @@ import std/[math, times, strutils]
 const
   DmiRadarApi* = "https://opendataapi.dmi.dk/v1/radardata"
   DmiMetObsApi* = "https://opendataapi.dmi.dk/v2/metObs"
+  DmiLightningApi* = "https://opendataapi.dmi.dk/v2/lightningdata"
 
   EumWmsUrl* = "https://view.eumetsat.int/geoserver/wms"
   EumFetchW* = 4096
@@ -17,11 +18,20 @@ const
   GibsWmsUrl* = "https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi"
   GibsLayer* = "MODIS_Terra_CorrectedReflectance_TrueColor"
 
+  # HTTP fetch timeouts (ms), passed to httputil's get calls.
+  RadarFetchTimeoutMs* = 180000
+  SatFetchTimeoutMs* = 180000
+  GibsProbeTimeoutMs* = 30000
+
   DataDir* = "data"
 
   CenterLon* = 11.0 + 46.0 / 60.0
   CenterLat* = 55.0 + 58.0 / 60.0
   BaseWidthM* = 1_050_000.0
+
+  # PseudoCappi composite output grid.
+  CompositeGridNx* = 1200
+  CompositeMargin* = 0.02
 
   WindBbox* = "3,52,21,60"
   # OGC API page-size cap for the wind query. The ±10 min window over the
@@ -29,14 +39,41 @@ const
   # high (3+ orders of magnitude) so every feature arrives in one response
   # without any pagination handling.
   WindFetchLimit* = 300000
-  MsToKnot* = 1.9438444924406046
 
   MaxStationRadiusKm* = 75.0
+
+  # --- Lightning ---
+  # Wider than the wind bbox — catches strikes over the North Sea and
+  # Norwegian coast so nearby storms aren't clipped at the Danish shoreline.
+  LightningBbox* = "0,52,24,62"
+  LightningCacheFile* = "lightning.json"
+  # Rolling window kept in the cache and rendered. Pruning and the fetch
+  # window are both anchored to the radar scan timestamp, so the rendered
+  # ages match the radar frame the viewer is looking at.
+  LightningWindowHours* = 24.0
+  # Aging: opacity = 1 - floor(ageHours / step) * decrement, clamped to 0.
+  # 2.4h step * 0.1 decrement = 100% → 0% over exactly 24h, deleted at 24h.
+  LightningOpacityStepHours* = 2.4
+  LightningOpacityDecrement* = 0.1
+  LightningFetchLimit* = 300000    # API max
+  LightningMaxPages* = 10          # safety cap; ~3M strikes across Denmark
+  LightningFetchOverlapMinutes* = 2 # dedup-by-id absorbs the overlap
+  LightningDiamondR* = 5.0         # half-diagonal in canvas pixels
+  LightningFillR* = 1.0.float32
+  LightningFillG* = 0.0.float32
+  LightningFillB* = 0.0.float32
+  LightningOutlineR* = 0.0.float32
+  LightningOutlineG* = 0.0.float32
+  LightningOutlineB* = 0.0.float32
+  LightningOutlineWidth* = 1.0
 
   ArrowColorR* = 0x2E.float32 / 255.0
   ArrowColorG* = 0x70.float32 / 255.0
   ArrowColorB* = 0xFF.float32 / 255.0
   ArrowColorA* = 0.55.float32
+  ArrowLengthM* = 41000.0
+  WindFontSize* = 22.0
+  WindLabelStrokeWidth* = 3.0
 
   CoastColorHex* = "#63666A"
 
@@ -53,8 +90,6 @@ type
     ssGeocolour, ssEumetsatMtg, ssEumetsatMsg, ssGibsModis, ssNone
 
   EumLayer* = tuple[name: string, cadence: int]
-
-  DbzBand* = tuple[lo, hi: float32, r, g, b: float32]
 
 proc eumLayer*(src: SatSource): EumLayer =
   case src
@@ -107,6 +142,7 @@ type
     satSource*: SatSource
     noSatellite*: bool
     noWind*: bool
+    noLightning*: bool
     minDbz*: float32
     despeckle*: bool
     zoom*: float64
@@ -118,6 +154,7 @@ proc defaultConfig*(): AppConfig =
   result.satSource = ssGeocolour
   result.noSatellite = false
   result.noWind = false
+  result.noLightning = false
   result.minDbz = 10.0
   result.despeckle = false
   result.zoom = 1.0
@@ -129,3 +166,8 @@ proc parseIsoUtc*(s: string): Time =
   ## APIs by rewriting it to `+00:00` before `parse`.
   let t = s.replace("Z", "+00:00")
   result = parse(t, "yyyy-MM-dd'T'HH:mm:sszzz", utc()).toTime()
+
+proc formatIsoUtc*(t: Time): string =
+  ## Format a `Time` as an ISO-8601 UTC string (`...Z`), the form expected
+  ## by the DMI/EUMETSAT API query parameters. Pairs with `parseIsoUtc`.
+  result = t.utc.format("yyyy-MM-dd'T'HH:mm:ss'Z'")

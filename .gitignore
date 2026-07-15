@@ -5,6 +5,7 @@
 /tests/test_config
 /tests/test_interp
 /tests/test_wind
+/tests/test_lightning
 
 # Nim cache
 /nimcache/

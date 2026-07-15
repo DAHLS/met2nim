@@ -1,6 +1,6 @@
 import std/[math]
 import arraymancer
-import geo, h5read
+import geo, config, h5read
 
 proc bilinearSample*(t: Tensor[float32], xIn, yIn: seq[float64],
                      x, y: float64; j0, i0: var int): float32 =
@@ -63,16 +63,15 @@ proc compositePseudoCappi*(stations: seq[PseudoCappiStation],
       xmax = max(xmax, ox)
       ymin = min(ymin, oy)
       ymax = max(ymax, oy)
-  # Add 2% margin.
+  # Add margin.
   let dx = xmax - xmin
   let dy = ymax - ymin
-  let margin = 0.02
-  xmin -= dx * margin
-  xmax += dx * margin
-  ymin -= dy * margin
-  ymax += dy * margin
+  xmin -= dx * CompositeMargin
+  xmax += dx * CompositeMargin
+  ymin -= dy * CompositeMargin
+  ymax += dy * CompositeMargin
 
-  let nx = 1200
+  let nx = CompositeGridNx
   let aspect = (ymax - ymin) / (xmax - xmin)
   let ny = max(2, int(round(nx.float64 * aspect)))
 

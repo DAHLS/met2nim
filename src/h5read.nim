@@ -2,6 +2,8 @@ import nimhdf5
 import arraymancer
 import geo
 
+const RadarDatasetPath = "dataset1/data1/data"
+
 type
   RadarField* = object
     dbz*: Tensor[float32]
@@ -94,7 +96,7 @@ proc parseRadarH5*(path: string): RadarField =
   let whereGrp = h5f["where".grp_str]
   let extent = projectionExtent(whereGrp, proj, path)
 
-  let dset = h5f["dataset1/data1/data".dset_str]
+  let dset = h5f[RadarDatasetPath.dset_str]
   let dbz = readScaledDbz(dset, gain, offset, nodata, path)
 
   result = RadarField(dbz: dbz, extent: extent, proj: proj)
@@ -115,7 +117,7 @@ proc readPseudoCappiStation*(path: string): PseudoCappiStation =
   let whereGrp = h5f["where".grp_str]
   let extent = projectionExtent(whereGrp, stationProj, path)
 
-  let dset = h5f["dataset1/data1/data".dset_str]
+  let dset = h5f[RadarDatasetPath.dset_str]
   let dbzData = readScaledDbz(dset, gain, offset, nodata, path)
 
   let shape = dset.shape
