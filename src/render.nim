@@ -216,7 +216,7 @@ proc renderLightning*(ctx: contexts.Context, proj: Projection, viewExt: Extent,
   # One beginPath per strike: pixie accumulates subpaths without it, causing
   # both opacity stacking and redundant redraws (see README pixie note).
   for s in strikes:
-    let ageH = (scanTime - s.observed).inHours.float64
+    let ageH = (scanTime - s.observed).inSeconds.float64 / 3600.0
     let op = lightningOpacity(ageH)
     if op <= 0.0:
       continue
@@ -229,7 +229,7 @@ proc renderLightning*(ctx: contexts.Context, proj: Projection, viewExt: Extent,
     ctx.lineTo(cx, cy + LightningDiamondR)
     ctx.lineTo(cx - LightningDiamondR, cy)
     ctx.closePath()
-    # Fill (bright red, aged alpha), then stroke (thin black, same aged alpha
+    # Fill (bright purple, aged alpha), then stroke (thin black, same aged alpha
     # so outline and body fade together).
     ctx.fillStyle = color(LightningFillR, LightningFillG, LightningFillB, op)
     ctx.strokeStyle = color(LightningOutlineR, LightningOutlineG,

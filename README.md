@@ -8,7 +8,7 @@ This is a Nim rewrite of the Python project [`met2img`](../met2img.py). It is an
 
 - **Radar data** — downloads the newest ODIM_H5 radar data from DMI's open data API. Supports the `composite` (single pre-gridded file) and `pseudoCappi` (multiple station files, reprojected and max-blended) collections.
 - **Wind observations** — fetches wind direction and speed from DMI's meteorological observation API, rendered as semi-transparent arrows at 8 fixed anchor points across Denmark. Positions never move between runs; only direction and speed change.
-- **Lightning observations** — fetches triangulated lightning strikes from DMI's lightning data API over a rolling 24-hour window (anchored to the radar scan time) and renders them as small bright-red diamonds with a thin black outline. Markers fade with age: 100% at 0h, −10% opacity per 2.4h, 0% at 24h. A persistent rolling cache (`data/lightning.json`) accumulates strikes across runs with id-based dedup and an incremental fetch with a 2-minute overlap, so only the delta is requested each cron cycle.
+- **Lightning observations** — fetches triangulated lightning strikes from DMI's lightning data API over a rolling 3-hour window (anchored to the radar scan time) and renders them as small bright-purple diamonds with a thin black outline. Markers fade linearly with age: 100% at 0h → 0% at 3h. A persistent rolling cache (`data/lightning.json`) accumulates strikes across runs with id-based dedup and an incremental fetch with a 2-minute overlap, so only the delta is requested each cron cycle.
 - **Satellite background** — downloads a satellite image via WMS GetMap. Supports EUMETSAT MTG GeoColor (day/night blend, 10-minute cadence), MTG true-color, MSG natural color, and NASA GIBS MODIS Terra true-color (daily, razor-sharp). Falls back to GIBS MODIS if an EUMETSAT source fails.
 - **Coastlines** — draws simplified Natural Earth 10m coastlines from a bundled GeoJSON file.
 - **Output** — a 1600×1200 PNG with DMI-style stepped reflectivity colors, wind arrows with speed labels (m/s), lightning diamonds, and coastlines. Filename: `radar_YYYYMMDD-HHMM.png` (UTC, from the radar scan time).
@@ -122,11 +122,11 @@ Downloaded DMI data is stored in a `data/` folder and reused on subsequent runs:
 
 - **Radar** — `.h5` files are kept in `data/`. DMI filenames encode the scan timestamp, so an identical filename means identical data. If the cached file matches the newest available from the API, the download is skipped. Leftover `.h5.tmp` files from interrupted downloads are cleaned up on each run.
 - **Wind** — `wind_<scanstamp>.json` is saved alongside the radar file, keyed to the same scan timestamp. An empty result (no observations found) is not cached, so a transient API failure won't poison future runs for the same scan time.
-- **Lightning** — `lightning.json` is a **persistent rolling cache** (unlike radar/wind, which are replaced each run). It stores every strike observed within the 24-hour window ending at the most recent radar scan time, plus that scan time as `lastFetch`. Each run:
-  1. If the cache is empty/missing → full fetch `scanTime−24h .. scanTime`, reset the cache.
+- **Lightning** — `lightning.json` is a **persistent rolling cache** (unlike radar/wind, which are replaced each run). It stores every strike observed within the 3-hour window ending at the most recent radar scan time, plus that scan time as `lastFetch`. Each run:
+  1. If the cache is empty/missing → full fetch `scanTime−3h .. scanTime`, reset the cache.
   2. If `scanTime` is newer than `lastFetch` → incremental fetch `lastFetch−2min .. scanTime` (the overlap guards late-arriving records; dedup is by the DMI feature `id`, which is stable across responses, so re-fetching the overlap is harmless).
   3. If `scanTime` is not newer than `lastFetch` (manual rerun against an older cached radar, or a radar feed regression) → skip the fetch entirely and just re-prune against the new `scanTime` so opacity/ageing stays correct.
-  4. Prune strikes with `observed < scanTime−24h`, then save.
+  4. Prune strikes with `observed < scanTime−3h`, then save.
   
   A fetch failure is non-fatal: the existing cache is preserved (possibly empty) and the run continues with whatever strikes are on hand. Pagination is handled via the response's `rel="next"` links with a 10-page safety cap (~3M strikes across Denmark — well beyond any realistic storm), and a fallback heuristic flags a full page without a next link.
 - **Cleanup** — old `.h5` and `wind_*.json` files are deleted only after the new radar file has been written successfully, so a failed download never leaves `data/` empty. The lightning cache is untouched by these cleanup loops (they only match `*.h5` and `wind_*.json`); it is pruned in place on every run as described above.
@@ -200,7 +200,7 @@ met2nim/
 │   ├── interp.nim      # Bilinear resampling + max-blend (pseudoCappi)
 │   ├── radar.nim       # DMI API fetch, download/cache, parse dispatch
 │   ├── wind.nim        # DMI metObs fetch, site assignment, arrow geometry
-│   ├── lightning.nim   # DMI lightning fetch, rolling 24h cache, opacity aging
+│   ├── lightning.nim   # DMI lightning fetch, rolling 3h cache, opacity aging
 │   ├── sat.nim         # EUMETSAT WMS GetMap → pixie Image
 │   ├── coast.nim       # GeoJSON coastline loader + renderer
 │   ├── render.nim      # Compositing pipeline (pixie canvas)
@@ -223,10 +223,10 @@ met2nim/
 | `interp` | Bilinear resampling of station-local grids onto a common output grid, then max-blends (strongest echo wins). | scipy.interpolate.griddata / RegularGridInterpolator | arraymancer |
 | `radar` | Fetches radar file metadata from DMI API (JSON), manages download + cache + cleanup, dispatches parsing to h5read/interp based on collection kind. | met2img.py fetch + cache functions | std/httpclient (via httputil) |
 | `wind` | Fetches wind_dir + wind_speed from DMI metObs API, assigns stations to fixed anchor sites (Voronoi-style nearest with radius cutoff via Vincenty geodesic), computes arrow polygon geometry, manages JSON cache. | met2img.py wind functions + pyproj Geod | std/httpclient, geo |
-| `lightning` | Fetches triangulated lightning strikes from the DMI lightning API, maintains a persistent rolling 24h cache (`lightning.json`) with incremental fetch + id-based dedup + age-based prune, computes opacity aging. | (new — no Python equivalent) | std/httpclient, geo (via render), std/json, std/times |
+| `lightning` | Fetches triangulated lightning strikes from the DMI lightning API, maintains a persistent rolling 3h cache (`lightning.json`) with incremental fetch + id-based dedup + age-based prune, computes opacity aging. | (new — no Python equivalent) | std/httpclient, geo (via render), std/json, std/times |
 | `sat` | Downloads EUMETSAT GeoColor WMS GetMap image, decodes PNG to pixie Image, computes the geographic bounding box of the current view. | met2img.py satellite functions | pixie |
 | `coast` | Parses the embedded GeoJSON (loaded from a string, not a file), projects lat/lon coordinates through the map projection to canvas pixels, strokes coastline polylines. | cartopy cfeature.COASTLINE | pixie, std/json |
-| `render` | The compositing pipeline: black canvas → satellite background (per-pixel reprojection) → radar overlay (per-pixel colormap + alpha blend) → coastlines → wind arrow polygons + speed labels with outlined text → lightning diamonds (red fill + black outline, aged alpha) → save PNG. Also contains the 3×3 median despeckle filter. | matplotlib + cartopy rendering | pixie, arraymancer |
+| `render` | The compositing pipeline: black canvas → satellite background (per-pixel reprojection) → radar overlay (per-pixel colormap + alpha blend) → coastlines → wind arrow polygons + speed labels with outlined text → lightning diamonds (purple fill + black outline, aged alpha) → save PNG. Also contains the 3×3 median despeckle filter. | matplotlib + cartopy rendering | pixie, arraymancer |
 | `httputil` | Two shared procs (`httpGetJson`, `httpGetBytes`) used by radar, wind, and sat modules. | urllib.request | std/httpclient |
 
 ### Why not one file?

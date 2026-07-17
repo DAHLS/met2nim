@@ -167,7 +167,7 @@ proc main() =
 
   let windFont = loadWindFont(cfg.fontPath)
 
-  # Lightning data (rolling 24h cache, anchored to the radar scan time).
+  # Lightning data (rolling 3h cache, anchored to the radar scan time).
   var lightningStrikes: seq[LightningStrike] = @[]
   if not cfg.noLightning:
     echo &"Acquiring lightning (window {LightningWindowHours:.0f}h up to {scanDt.utc.format(\"HH:mm 'UTC'\")})..."

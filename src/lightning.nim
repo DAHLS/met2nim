@@ -8,19 +8,18 @@ type
     observed*: Time       # UTC strike time
 
   # Persistent cache: the most recent scanTime fetched up to, plus every
-  # strike observed within the rolling 24h window ending at that scanTime.
+  # strike observed within the rolling 3h window ending at that scanTime.
   LightningCache* = object
     lastFetch*: Time      # scanTime of the last successful fetch
     strikes*: seq[LightningStrike]
 
 # --- Opacity aging ---
-# Stepped fade: 100% at 0h, -10% per 2.4h, hits 0% at exactly 24h, deleted
-# after 24h. Anchored to the radar scan timestamp (see LightningWindowHours).
+# Linear fade: 100% at 0h → 0% at 3h, deleted after 3h. Anchored to the
+# radar scan timestamp (see LightningWindowHours).
 proc lightningOpacity*(ageHours: float64): float32 =
   if ageHours < 0.0:
     return 1.0
-  let steps = int(ageHours / LightningOpacityStepHours)
-  let op = 1.0 - float(steps) * LightningOpacityDecrement
+  let op = 1.0 - ageHours / LightningWindowHours
   if op <= 0.0:
     return 0.0
   result = float32(op)
@@ -91,7 +90,8 @@ proc fetchLightningPage(loStr, hiStr: string): seq[LightningStrike] =
     if feats != nil and feats.kind == JArray:
       for f in feats:
         try: result.add(extractStrike(f))
-        except CatchableError: discard
+        except CatchableError as e:
+          stderr.writeLine(&"warning: lightning feature parse failed ({e.msg})")
     # Look for a next page link.
     var nextHref = ""
     let links = data{"links"}
@@ -119,7 +119,7 @@ proc fetchLightningPage(loStr, hiStr: string): seq[LightningStrike] =
 # --- Merge + prune ---
 # Merge newly fetched strikes into the cache (dedup by id — a strike's id is
 # stable across responses, so re-fetching the overlap window is harmless),
-# then drop anything older than the 24h window ending at scanTime. lastFetch
+# then drop anything older than the 3h window ending at scanTime. lastFetch
 # is advanced to scanTime only when the fetch actually ran.
 
 proc mergeAndPrune*(cache: var LightningCache, fetched: seq[LightningStrike],
@@ -143,9 +143,9 @@ proc mergeAndPrune*(cache: var LightningCache, fetched: seq[LightningStrike],
   cache.strikes = kept
 
 # --- Public entry point ---
-# Returns the renderable set of strikes (all within the 24h window ending at
+# Returns the renderable set of strikes (all within the 3h window ending at
 # scanTime). The cache is a persistent rolling file at data/lightning.json:
-#   - empty / missing        → full fetch scanTime-24h .. scanTime, reset cache
+#   - empty / missing        → full fetch scanTime-3h .. scanTime, reset cache
 #   - lastFetch >= scanTime  → skip fetch (manual rerun of older radar), just prune
 #   - otherwise              → incremental fetch (lastFetch - overlap) .. scanTime
 # Failures are non-fatal: a fetch error leaves the existing cache intact and

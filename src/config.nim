@@ -50,18 +50,16 @@ const
   # Rolling window kept in the cache and rendered. Pruning and the fetch
   # window are both anchored to the radar scan timestamp, so the rendered
   # ages match the radar frame the viewer is looking at.
-  LightningWindowHours* = 24.0
-  # Aging: opacity = 1 - floor(ageHours / step) * decrement, clamped to 0.
-  # 2.4h step * 0.1 decrement = 100% → 0% over exactly 24h, deleted at 24h.
-  LightningOpacityStepHours* = 2.4
-  LightningOpacityDecrement* = 0.1
+  LightningWindowHours* = 3.0
+  # Linear fade: opacity = 1 - ageHours / LightningWindowHours, clamped to [0, 1].
+  # 100% at 0h → 0% at 3h, deleted after 3h.
   LightningFetchLimit* = 300000    # API max
   LightningMaxPages* = 10          # safety cap; ~3M strikes across Denmark
   LightningFetchOverlapMinutes* = 2 # dedup-by-id absorbs the overlap
   LightningDiamondR* = 5.0         # half-diagonal in canvas pixels
-  LightningFillR* = 1.0.float32
+  LightningFillR* = 0.75.float32
   LightningFillG* = 0.0.float32
-  LightningFillB* = 0.0.float32
+  LightningFillB* = 1.0.float32
   LightningOutlineR* = 0.0.float32
   LightningOutlineG* = 0.0.float32
   LightningOutlineB* = 0.0.float32
@@ -163,8 +161,15 @@ proc defaultConfig*(): AppConfig =
 proc parseIsoUtc*(s: string): Time =
   ## Parse an ISO-8601 timestamp (with trailing 'Z' or a numeric offset)
   ## into a UTC `Time`. Handles the `...Z` form used by the DMI/EUMETSAT
-  ## APIs by rewriting it to `+00:00` before `parse`.
-  let t = s.replace("Z", "+00:00")
+  ## APIs by rewriting it to `+00:00` before `parse`. Also strips fractional
+  ## seconds (the DMI lightning API returns e.g. `...19:36:21.735000Z`),
+  ## which Nim's `yyyy-MM-dd'T'HH:mm:sszzz` format cannot parse.
+  var t = s.replace("Z", "+00:00")
+  let dot = t.find('.')
+  if dot >= 0:
+    let tzStart = t.find('+', start = dot)
+    if tzStart >= 0:
+      t = t[0 ..< dot] & t[tzStart .. ^1]
   result = parse(t, "yyyy-MM-dd'T'HH:mm:sszzz", utc()).toTime()
 
 proc formatIsoUtc*(t: Time): string =
