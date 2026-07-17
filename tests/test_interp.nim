@@ -25,7 +25,7 @@ suite "interp: bilinearSample":
     var j0 = 0
     var i0 = 0
     let v = bilinearSample(t, xIn, yIn, 0.5, 0.5, j0, i0)
-    check v != v                            # NaN (no echo at this point)
+    check v != v # NaN (no echo at this point)
 
   test "out-of-domain sample returns NaN (no edge extrapolation)":
     var t = newTensor[float32]([2, 2])
@@ -36,7 +36,7 @@ suite "interp: bilinearSample":
       var j0 = 0
       var i0 = 0
       let v = bilinearSample(t, xIn, yIn, x, y, j0, i0)
-      check v != v  # NaN: must not return an edge value
+      check v != v # NaN: must not return an edge value
 
   test "running-index hint is result-invariant (#10)":
     # The seeded j0/i0 hints must not change the computed value, only the
@@ -57,7 +57,7 @@ suite "interp: bilinearSample":
         var j0f = 0
         var i0f = 0
         let fresh = bilinearSample(t, xIn, yIn, x, y, j0f, i0f)
-        var j0h = 2                          # arbitrary non-zero seed
+        var j0h = 2 # arbitrary non-zero seed
         var i0h = 3
         let hinted = bilinearSample(t, xIn, yIn, x, y, j0h, i0h)
         check sameNan(fresh, hinted)

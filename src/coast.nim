@@ -3,7 +3,7 @@ import pixie
 import geo, config
 
 type
-  Coastline* = seq[tuple[x, y: float64]]  # in lat/lon
+  Coastline* = seq[tuple[x, y: float64]] # in lat/lon
 
 proc loadCoastlines*(jsonStr: string): seq[Coastline] =
   let data = parseJson(jsonStr)

@@ -53,10 +53,10 @@ const
   LightningWindowHours* = 3.0
   # Linear fade: opacity = 1 - ageHours / LightningWindowHours, clamped to [0, 1].
   # 100% at 0h → 0% at 3h, deleted after 3h.
-  LightningFetchLimit* = 300000    # API max
-  LightningMaxPages* = 10          # safety cap; ~3M strikes across Denmark
+  LightningFetchLimit* = 300000 # API max
+  LightningMaxPages* = 10 # safety cap; ~3M strikes across Denmark
   LightningFetchOverlapMinutes* = 2 # dedup-by-id absorbs the overlap
-  LightningDiamondR* = 5.0         # half-diagonal in canvas pixels
+  LightningDiamondR* = 5.0 # half-diagonal in canvas pixels
   LightningFillR* = 0.75.float32
   LightningFillG* = 0.0.float32
   LightningFillB* = 1.0.float32
@@ -98,30 +98,30 @@ proc eumLayer*(src: SatSource): EumLayer =
 
 const
   WindSites* = [
-    (15.06, 55.24),  # Bornholm
-    (12.33, 55.30),  # Stevns
-    (11.19, 56.22),  # Kattegat
-    (10.60, 55.17),  # Fyn
-    (8.60, 55.31),   # Esbjerg
-    (9.60, 57.15),   # Nordjylland
-    (9.09, 56.29),   # Karup
-    (4.85, 56.35),   # Nordsøen
+    (15.06, 55.24),                                     # Bornholm
+    (12.33, 55.30),                                     # Stevns
+    (11.19, 56.22),                                     # Kattegat
+    (10.60, 55.17),                                     # Fyn
+    (8.60, 55.31),                                      # Esbjerg
+    (9.60, 57.15),                                      # Nordjylland
+    (9.09, 56.29),                                      # Karup
+    (4.85, 56.35),                                      # Nordsøen
   ]
 
   DbzBoundaries* = [5.float32, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 75]
 
   DbzColors* = [
-    (0xB0.float32, 0xF0.float32, 0xFF.float32),  #  5-10  pale cyan
-    (0x00.float32, 0xB0.float32, 0xFF.float32),  # 10-15  light blue
-    (0x00.float32, 0xE0.float32, 0x00.float32),  # 15-20  green
-    (0x00.float32, 0xA0.float32, 0x00.float32),  # 20-25  dark green
-    (0xC8.float32, 0xE0.float32, 0x00.float32),  # 25-30  yellow-green
-    (0xFF.float32, 0xFF.float32, 0x00.float32),  # 30-35  yellow
-    (0xFF.float32, 0xA0.float32, 0x00.float32),  # 35-40  orange
-    (0xFF.float32, 0x50.float32, 0x00.float32),  # 40-45  red-orange
-    (0xFF.float32, 0x00.float32, 0x00.float32),  # 45-50  red
-    (0xC0.float32, 0x00.float32, 0xC0.float32),  # 50-55  magenta
-    (0xFF.float32, 0xFF.float32, 0xFF.float32),  # 55-75  white
+    (0xB0.float32, 0xF0.float32, 0xFF.float32),         #  5-10  pale cyan
+    (0x00.float32, 0xB0.float32, 0xFF.float32),         # 10-15  light blue
+    (0x00.float32, 0xE0.float32, 0x00.float32),         # 15-20  green
+    (0x00.float32, 0xA0.float32, 0x00.float32),         # 20-25  dark green
+    (0xC8.float32, 0xE0.float32, 0x00.float32),         # 25-30  yellow-green
+    (0xFF.float32, 0xFF.float32, 0x00.float32),         # 30-35  yellow
+    (0xFF.float32, 0xA0.float32, 0x00.float32),         # 35-40  orange
+    (0xFF.float32, 0x50.float32, 0x00.float32),         # 40-45  red-orange
+    (0xFF.float32, 0x00.float32, 0x00.float32),         # 45-50  red
+    (0xC0.float32, 0x00.float32, 0xC0.float32),         # 50-55  magenta
+    (0xFF.float32, 0xFF.float32, 0xFF.float32),         # 55-75  white
   ]
 
 proc dbzToRgba*(dbz: float32): tuple[r, g, b, a: float32] =

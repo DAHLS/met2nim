@@ -23,11 +23,13 @@ proc errorBody(resp: Response): string =
 proc httpGetJson*(url: string, timeout = 60000): JsonNode =
   let resp = getClient(timeout).get(url)
   if resp.code != Http200:
-    raise newException(ValueError, "HTTP GET failed: " & $int(resp.code) & " for " & url & errorBody(resp))
+    raise newException(ValueError, "HTTP GET failed: " & $int(resp.code) &
+        " for " & url & errorBody(resp))
   result = parseJson(resp.body)
 
 proc httpGetBytes*(url: string, timeout = 120000): string =
   let resp = getClient(timeout).get(url)
   if resp.code != Http200:
-    raise newException(ValueError, "HTTP GET failed: " & $int(resp.code) & " for " & url)
+    raise newException(ValueError, "HTTP GET failed: " & $int(resp.code) &
+        " for " & url)
   result = resp.body

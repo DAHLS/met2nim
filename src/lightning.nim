@@ -3,14 +3,14 @@ import config, httputil
 
 type
   LightningStrike* = object
-    id*: string           # DMI feature id (stable across responses — dedup key)
+    id*: string     # DMI feature id (stable across responses — dedup key)
     lon*, lat*: float64
-    observed*: Time       # UTC strike time
+    observed*: Time # UTC strike time
 
   # Persistent cache: the most recent scanTime fetched up to, plus every
   # strike observed within the rolling 3h window ending at that scanTime.
   LightningCache* = object
-    lastFetch*: Time      # scanTime of the last successful fetch
+    lastFetch*: Time # scanTime of the last successful fetch
     strikes*: seq[LightningStrike]
 
 # --- Opacity aging ---
@@ -57,7 +57,8 @@ proc loadLightningCache*(path: string): LightningCache =
       let lon = row[1].getFloat()
       let lat = row[2].getFloat()
       let obs = parseIsoUtc(row[3].getStr())
-      result.strikes.add(LightningStrike(id: id, lon: lon, lat: lat, observed: obs))
+      result.strikes.add(LightningStrike(id: id, lon: lon, lat: lat,
+          observed: obs))
 
 # --- Response parsing ---
 # OGC API Features: features[].{id, geometry.coordinates[lon,lat], properties.observed}
@@ -108,7 +109,7 @@ proc fetchLightningPage(loStr, hiStr: string): seq[LightningStrike] =
     let n = if nReturned != nil and nReturned.kind == JInt: nReturned.getInt() else: 0
     if nextHref.len == 0:
       if n < LightningFetchLimit:
-        return  # complete
+        return # complete
       # No next link but a full page: log and stop to avoid an infinite loop.
       stderr.writeLine("warning: lightning page full but no next link; results may be truncated")
       return
@@ -151,11 +152,13 @@ proc mergeAndPrune*(cache: var LightningCache, fetched: seq[LightningStrike],
 # Failures are non-fatal: a fetch error leaves the existing cache intact and
 # returns whatever is already cached (possibly empty).
 
-proc acquireLightning*(scanTime: Time, cachePath = DataDir / LightningCacheFile): seq[LightningStrike] =
+proc acquireLightning*(scanTime: Time, cachePath = DataDir /
+    LightningCacheFile): seq[LightningStrike] =
   var cache = loadLightningCache(cachePath)
   let
     nowStr = formatIsoUtc(scanTime)
-    fullLo = formatIsoUtc(scanTime - initDuration(hours = int(LightningWindowHours)))
+    fullLo = formatIsoUtc(scanTime - initDuration(hours = int(
+        LightningWindowHours)))
 
   if cache.lastFetch == Time() and cache.strikes.len == 0:
     echo &"Lightning cache empty; fetching full {LightningWindowHours:.0f}h window..."
@@ -172,7 +175,8 @@ proc acquireLightning*(scanTime: Time, cachePath = DataDir / LightningCacheFile)
     # new scanTime so opacity/ageing stays correct.
     mergeAndPrune(cache, @[], scanTime, didFetch = false)
   else:
-    let lo = formatIsoUtc(cache.lastFetch - initDuration(minutes = LightningFetchOverlapMinutes))
+    let lo = formatIsoUtc(cache.lastFetch - initDuration(
+        minutes = LightningFetchOverlapMinutes))
     echo &"Fetching lightning incrementally ({LightningFetchOverlapMinutes}-min overlap)..."
     try:
       let fetched = fetchLightningPage(lo, nowStr)

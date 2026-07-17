@@ -2,14 +2,14 @@ import std/[math, strutils, tables]
 import config
 
 const
-  Wgs84A* = 6378137.0           # semi-major axis
-  Wgs84F* = 1.0 / 298.257223563 # flattening
+  Wgs84A* = 6378137.0                       # semi-major axis
+  Wgs84F* = 1.0 / 298.257223563             # flattening
   Wgs84B* = Wgs84A * (1.0 - Wgs84F)
   Wgs84E2* = 2.0 * Wgs84F - Wgs84F * Wgs84F # eccentricity squared
   Wgs84E* = sqrt(Wgs84E2)
-  VincentyMaxIter* = 100       # iteration cap for Vincenty solvers
-  VincentyEps* = 1e-12        # convergence threshold for Vincenty solvers
-  InvProjRhoEps* = 1e-10      # rho-below-this = at projection center
+  VincentyMaxIter* = 100                    # iteration cap for Vincenty solvers
+  VincentyEps* = 1e-12                      # convergence threshold for Vincenty solvers
+  InvProjRhoEps* = 1e-10                    # rho-below-this = at projection center
 
 type
   ProjectionKind* = enum
@@ -46,13 +46,15 @@ proc geodeticFromConformal*(chi: float64): float64 =
 
 proc parseProjdef*(projdef: string): Projection =
   var parts: Table[string, string] = initTable[string, string]()
-  let clean = projdef.strip(leading = true, trailing = true, chars = {'\0', ' ', '\t', '\r', '\n'})
+  let clean = projdef.strip(leading = true, trailing = true, chars = {'\0', ' ',
+      '\t', '\r', '\n'})
   for tok in clean.split():
     if tok.startsWith("+"):
       let s = tok[1 ..^ 1]
       let eq = s.find('=')
       if eq > 0:
-        let val = s[eq + 1 ..^ 1].strip(leading = true, trailing = true, chars = {'\0', ' ', '\t', '\r', '\n'})
+        let val = s[eq + 1 ..^ 1].strip(leading = true, trailing = true,
+            chars = {'\0', ' ', '\t', '\r', '\n'})
         parts[s[0 ..< eq]] = val
   let ptype = parts.getOrDefault("proj", "stere")
   result.lat0 = parseFloat(parts.getOrDefault("lat_0", "90"))
@@ -146,7 +148,8 @@ proc toCanvasPx*(viewExt: Extent, x, y: float64,
 
 # --- Vincenty geodesic ---
 
-proc vincentyInverse*(lon1, lat1, lon2, lat2: float64): tuple[az, baz, dist: float64] =
+proc vincentyInverse*(lon1, lat1, lon2, lat2: float64): tuple[az, baz,
+    dist: float64] =
   let
     a = Wgs84A
     f = Wgs84F
@@ -173,7 +176,7 @@ proc vincentyInverse*(lon1, lat1, lon2, lat2: float64): tuple[az, baz, dist: flo
                     (cosU1 * sinU2 - sinU1 * cosU2 * cosLambda) *
                     (cosU1 * sinU2 - sinU1 * cosU2 * cosLambda))
     if sinSigma == 0.0:
-      return (0.0, 0.0, 0.0)  # coincident
+      return (0.0, 0.0, 0.0) # coincident
     cosSigma = sinU1 * sinU2 + cosU1 * cosU2 * cosLambda
     sigma = arctan2(sinSigma, cosSigma)
     let sinAlpha = cosU1 * cosU2 * sinLambda / sinSigma
@@ -185,13 +188,17 @@ proc vincentyInverse*(lon1, lat1, lon2, lat2: float64): tuple[az, baz, dist: flo
     let c = f / 16.0 * cosSqAlpha * (4.0 + f * (4.0 - 3.0 * cosSqAlpha))
     lambdaP = lambda
     lambda = l + (1.0 - c) * f * sinAlpha *
-             (sigma + c * sinSigma * (cos2SigmaM + c * cosSigma * (-1.0 + 2.0 * cos2SigmaM * cos2SigmaM)))
+             (sigma + c * sinSigma * (cos2SigmaM + c * cosSigma * (-1.0 + 2.0 *
+                 cos2SigmaM * cos2SigmaM)))
     if abs(lambda - lambdaP) < VincentyEps:
       break
   let uSq = cosSqAlpha * (a * a - b * b) / (b * b)
-  let bigA = 1.0 + uSq / 16384.0 * (4096.0 + uSq * (-768.0 + uSq * (320.0 - 175.0 * uSq)))
+  let bigA = 1.0 + uSq / 16384.0 * (4096.0 + uSq * (-768.0 + uSq * (320.0 -
+      175.0 * uSq)))
   let bigB = uSq / 1024.0 * (256.0 + uSq * (-128.0 + uSq * (74.0 - 47.0 * uSq)))
-  let deltaSigma = bigB * sinSigma * (cos2SigmaM + bigB / 4.0 * (cosSigma * (-1.0 + 2.0 * cos2SigmaM * cos2SigmaM) - bigB / 6.0 * cos2SigmaM * (-3.0 + 4.0 * sinSigma * sinSigma) * (-3.0 + 4.0 * cos2SigmaM * cos2SigmaM)))
+  let deltaSigma = bigB * sinSigma * (cos2SigmaM + bigB / 4.0 * (cosSigma * (
+      -1.0 + 2.0 * cos2SigmaM * cos2SigmaM) - bigB / 6.0 * cos2SigmaM * (-3.0 +
+      4.0 * sinSigma * sinSigma) * (-3.0 + 4.0 * cos2SigmaM * cos2SigmaM)))
   result.dist = b * bigA * (sigma - deltaSigma)
   let fwdAz = arctan2(cosU2 * sin(lambda),
                       cosU1 * sinU2 - sinU1 * cosU2 * cos(lambda))
@@ -218,7 +225,8 @@ proc vincentyForward*(lon, lat, az, dist: float64): tuple[lon2, lat2: float64] =
   let sinAlpha = cosU1 * sinAlpha1
   let cosSqAlpha = 1.0 - sinAlpha * sinAlpha
   let uSq = cosSqAlpha * (a * a - b * b) / (b * b)
-  let bigA = 1.0 + uSq / 16384.0 * (4096.0 + uSq * (-768.0 + uSq * (320.0 - 175.0 * uSq)))
+  let bigA = 1.0 + uSq / 16384.0 * (4096.0 + uSq * (-768.0 + uSq * (320.0 -
+      175.0 * uSq)))
   let bigB = uSq / 1024.0 * (256.0 + uSq * (-128.0 + uSq * (74.0 - 47.0 * uSq)))
   var
     sigma = dist / (b * bigA)
@@ -230,7 +238,9 @@ proc vincentyForward*(lon, lat, az, dist: float64): tuple[lon2, lat2: float64] =
     cos2SigmaM = cos(2.0 * sigma1 + sigma)
     sinSigma = sin(sigma)
     cosSigma = cos(sigma)
-    let deltaSigma = bigB * sinSigma * (cos2SigmaM + bigB / 4.0 * (cosSigma * (-1.0 + 2.0 * cos2SigmaM * cos2SigmaM) - bigB / 6.0 * cos2SigmaM * (-3.0 + 4.0 * sinSigma * sinSigma) * (-3.0 + 4.0 * cos2SigmaM * cos2SigmaM)))
+    let deltaSigma = bigB * sinSigma * (cos2SigmaM + bigB / 4.0 * (cosSigma * (
+        -1.0 + 2.0 * cos2SigmaM * cos2SigmaM) - bigB / 6.0 * cos2SigmaM * (
+        -3.0 + 4.0 * sinSigma * sinSigma) * (-3.0 + 4.0 * cos2SigmaM * cos2SigmaM)))
     sigmaP = sigma
     sigma = dist / (b * bigA) + deltaSigma
     if abs(sigma - sigmaP) < VincentyEps:
@@ -240,6 +250,7 @@ proc vincentyForward*(lon, lat, az, dist: float64): tuple[lon2, lat2: float64] =
                      (1.0 - f) * sqrt(sinAlpha * sinAlpha + tmp * tmp))
   let lam = arctan2(sinSigma * sinAlpha1, cosU1 * cosSigma - sinU1 * sinSigma * cosAlpha1)
   let c = f / 16.0 * cosSqAlpha * (4.0 + f * (4.0 - 3.0 * cosSqAlpha))
-  let l = lam - (1.0 - c) * f * sinAlpha * (sigma + c * sinSigma * (cos2SigmaM + c * cosSigma * (-1.0 + 2.0 * cos2SigmaM * cos2SigmaM)))
+  let l = lam - (1.0 - c) * f * sinAlpha * (sigma + c * sinSigma * (cos2SigmaM +
+      c * cosSigma * (-1.0 + 2.0 * cos2SigmaM * cos2SigmaM)))
   result.lon2 = lon + radToDeg(l)
   result.lat2 = radToDeg(phi2)

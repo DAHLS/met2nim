@@ -32,9 +32,11 @@ suite "lightning: mergeAndPrune":
 
   test "dedup by id across overlap":
     var cache = LightningCache(lastFetch: mkTime(1000),
-      strikes: @[LightningStrike(id: "a", lon: 10.0, lat: 56.0, observed: mkTime(950))])
+      strikes: @[LightningStrike(id: "a", lon: 10.0, lat: 56.0,
+          observed: mkTime(950))])
     let fetched = @[LightningStrike(id: "a", lon: 10.0, lat: 56.0, observed: mkTime(950)),
-                    LightningStrike(id: "b", lon: 11.0, lat: 56.0, observed: mkTime(1050))]
+                    LightningStrike(id: "b", lon: 11.0, lat: 56.0,
+                        observed: mkTime(1050))]
     mergeAndPrune(cache, fetched, mkTime(1100), didFetch = true)
     check cache.strikes.len == 2
     check cache.lastFetch == mkTime(1100)
@@ -44,9 +46,12 @@ suite "lightning: mergeAndPrune":
     let cutoff = scanTime - initDuration(hours = int(LightningWindowHours))
     var cache = LightningCache(lastFetch: mkTime(9900),
       strikes: @[
-        LightningStrike(id: "old",  lon: 10.0, lat: 56.0, observed: cutoff - initDuration(seconds = 1)),
-        LightningStrike(id: "keep", lon: 10.0, lat: 56.0, observed: cutoff + initDuration(seconds = 1)),
-        LightningStrike(id: "new",  lon: 10.0, lat: 56.0, observed: mkTime(9950)),
+        LightningStrike(id: "old", lon: 10.0, lat: 56.0, observed: cutoff -
+            initDuration(seconds = 1)),
+        LightningStrike(id: "keep", lon: 10.0, lat: 56.0, observed: cutoff +
+            initDuration(seconds = 1)),
+        LightningStrike(id: "new", lon: 10.0, lat: 56.0, observed: mkTime(
+            9950)),
       ])
     mergeAndPrune(cache, @[], scanTime, didFetch = false)
     check cache.strikes.len == 2

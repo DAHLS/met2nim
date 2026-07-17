@@ -38,7 +38,8 @@ proc parseCli(): AppConfig =
     if a.startsWith("--"):
       let eq = a.find('=')
       let key = if eq > 0: a[2 ..< eq] else: a[2 .. ^1]
-      let needsVal = key in ["outdir", "collection", "sat-source", "min-dbz", "zoom", "font"]
+      let needsVal = key in ["outdir", "collection", "sat-source", "min-dbz",
+          "zoom", "font"]
       if eq <= 0 and needsVal and i + 1 >= args.len:
         stderr.writeLine(&"error: --{key} requires a value")
         quit(1)
@@ -96,7 +97,8 @@ proc parseCli(): AppConfig =
 proc main() =
   let cfg = parseCli()
 
-  let collectionName = if cfg.collection == ckComposite: "composite" else: "pseudoCappi"
+  let collectionName = if cfg.collection ==
+      ckComposite: "composite" else: "pseudoCappi"
   echo &"Fetching newest {collectionName} radar file metadata..."
 
   let multiStation = cfg.collection == ckPseudoCappi
@@ -133,7 +135,7 @@ proc main() =
     minVal = Inf
     maxVal = -Inf
   for v in rf.dbz:
-    if v == v:  # not NaN
+    if v == v: # not NaN
       minVal = min(minVal, float(v))
       maxVal = max(maxVal, float(v))
   echo &"  reflectivity range: {minVal:.1f} to {maxVal:.1f} dBZ"

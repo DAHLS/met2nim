@@ -6,7 +6,7 @@ type
 
   ScanInfo* = object
     items*: seq[RadarItem]
-    scanDt*: Time       # UTC
+    scanDt*: Time # UTC
     dtIso*: string
 
 proc extractFeature(f: JsonNode): RadarItem =
@@ -29,7 +29,8 @@ proc fetchNewestRadar*(collection: string): RadarItem =
   let data = httpGetJson(url)
   let feats = data{"features"}
   if feats == nil or feats.len == 0:
-    raise newException(ValueError, "No radar files in collection '" & collection & "'")
+    raise newException(ValueError, "No radar files in collection '" &
+        collection & "'")
   result = extractFeature(feats[0])
 
 proc fetchNewestRadarSet*(collection: string, limit = 10): ScanInfo =
@@ -37,7 +38,8 @@ proc fetchNewestRadarSet*(collection: string, limit = 10): ScanInfo =
   let data = httpGetJson(url)
   let feats = data{"features"}
   if feats == nil or feats.len == 0:
-    raise newException(ValueError, "No radar files in collection '" & collection & "'")
+    raise newException(ValueError, "No radar files in collection '" &
+        collection & "'")
 
   # Group by datetime.
   var byTime: Table[string, seq[RadarItem]] = initTable[string, seq[RadarItem]]()
@@ -50,7 +52,8 @@ proc fetchNewestRadarSet*(collection: string, limit = 10): ScanInfo =
       discard
 
   if byTime.len == 0:
-    raise newException(ValueError, "No radar files with a downloadable href in collection '" & collection & "'")
+    raise newException(ValueError, "No radar files with a downloadable href in collection '" &
+        collection & "'")
 
   # Pick the scan time with the most stations. Iterate datetime keys in
   # descending order (ISO-8601 sorts lexically) so ties favour the newest.
@@ -122,7 +125,8 @@ proc downloadAndCacheRadarSingle*(item: RadarItem): string =
   cleanStaleTmp()
   result = radarPath
 
-proc parseRadarField*(paths: seq[string], collection: CollectionKind): RadarField =
+proc parseRadarField*(paths: seq[string],
+    collection: CollectionKind): RadarField =
   case collection
   of ckPseudoCappi:
     let outProj = dkCompositeProjection()

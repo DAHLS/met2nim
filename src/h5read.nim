@@ -7,7 +7,7 @@ const RadarDatasetPath = "dataset1/data1/data"
 type
   RadarField* = object
     dbz*: Tensor[float32]
-    extent*: Extent     # [xmin, xmax, ymin, ymax] in projection metres
+    extent*: Extent # [xmin, xmax, ymin, ymax] in projection metres
     proj*: Projection
 
 proc failH5*(path, msg: string) =
@@ -32,7 +32,8 @@ proc readAttrStr*(grp: H5Group, name: string, path: string): string =
 
 # --- Shared helpers ---
 
-proc projectionExtent*(whereGrp: H5Group, proj: Projection, path: string): Extent =
+proc projectionExtent*(whereGrp: H5Group, proj: Projection,
+    path: string): Extent =
   # Project the four LL/LR/UL/UR corner attributes and return the
   # enclosing bbox in projection metres: (xmin, xmax, ymin, ymax).
   const cornerKeys = [("LL_lon", "LL_lat"), ("LR_lon", "LR_lat"),
@@ -75,7 +76,8 @@ proc readScaledDbz*(dset: H5DataSet, gain, offset, nodata: float64,
   of dkInt8: fillScaled[int8](result, dset, gain, offset, nodata)
   else: failH5(path, "unexpected dataset dtype: " & $dset.dtypeAnyKind)
 
-proc readWhatScaling*(h5f: H5File, path: string): tuple[gain, offset, nodata: float64] =
+proc readWhatScaling*(h5f: H5File, path: string): tuple[gain, offset,
+    nodata: float64] =
   let whatGrp = h5f["what".grp_str]
   result.gain = readAttrF64(whatGrp, "gain", path)
   result.offset = readAttrF64(whatGrp, "offset", path)
@@ -103,9 +105,9 @@ proc parseRadarH5*(path: string): RadarField =
 
 type
   PseudoCappiStation* = object
-    dbz*: Tensor[float32]     # rows 0 = south (flipped from file)
-    xIn*: seq[float64]        # ascending x grid coords (station projection)
-    yIn*: seq[float64]        # ascending y grid coords (station projection)
+    dbz*: Tensor[float32] # rows 0 = south (flipped from file)
+    xIn*: seq[float64]    # ascending x grid coords (station projection)
+    yIn*: seq[float64]    # ascending y grid coords (station projection)
     stationProj*: Projection
 
 proc readPseudoCappiStation*(path: string): PseudoCappiStation =

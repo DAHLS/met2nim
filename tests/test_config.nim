@@ -9,8 +9,8 @@ suite "config: colormap":
     check dbzToRgba(4.9f).a == 0.0f
     # At/above floor -> opaque, with a color.
     check dbzToRgba(5.0f).a == 1.0f
-    check dbzToRgba(45.0f).a == 1.0f        # red band (45-50)
-    check dbzToRgba(77.0f).a == 1.0f        # white (>= 75)
+    check dbzToRgba(45.0f).a == 1.0f # red band (45-50)
+    check dbzToRgba(77.0f).a == 1.0f # white (>= 75)
     # NaN -> transparent.
     check dbzToRgba(NaN).a == 0.0f
 

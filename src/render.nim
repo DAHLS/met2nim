@@ -46,7 +46,7 @@ proc cleanRadar(dbz: Tensor[float32], minDbz: float32,
           inc n
       # Simple sort-based median of 9 values.
       vals.sort()
-      let m = vals[4]  # median of 9
+      let m = vals[4] # median of 9
       if m >= minDbz:
         med[i, j] = result[i, j]
   result = med
@@ -59,13 +59,13 @@ type
     zoom*: float64
     minDbz*: float32
     despeckle*: bool
-    satImage*: Image        # satellite background (nil if none)
-    satBbox*: tuple[w, s, e, n: float64]  # geographic bbox of sat image
+    satImage*: Image                     # satellite background (nil if none)
+    satBbox*: tuple[w, s, e, n: float64] # geographic bbox of sat image
     coastlines*: seq[Coastline]
     windArrows*: seq[WindArrow]
     windFont*: Font
     lightningStrikes*: seq[LightningStrike]
-    scanTime*: Time         # reference time for lightning age/opacity
+    scanTime*: Time                      # reference time for lightning age/opacity
 
 proc blendSrcOver(canvas: Image, px, py: int, src: ColorRGBA) =
   # Alpha blend src over dest, writing opaque (a=255) to the canvas.
@@ -197,7 +197,8 @@ proc renderWindArrows*(ctx: contexts.Context, proj: Projection, viewExt: Extent,
     # White stroke (outline) drawn first.
     windFont.paint = rgba(255, 255, 255, 255)
     ctx.image.strokeText(windFont, label, t,
-      strokeWidth = WindLabelStrokeWidth, hAlign = CenterAlign, vAlign = MiddleAlign)
+      strokeWidth = WindLabelStrokeWidth, hAlign = CenterAlign,
+      vAlign = MiddleAlign)
     # Black fill on top.
     windFont.paint = rgba(0, 0, 0, 255)
     ctx.image.fillText(windFont, label, t,

@@ -23,7 +23,8 @@ proc fetchWindAt*(scanDt: Time, windowMinutes = 10): seq[WindStation] =
     return @[]
 
   # Speed: nearest observation per station.
-  var spdBy: Table[string, tuple[delta: int64, speed: float64]] = initTable[string, tuple[delta: int64, speed: float64]]()
+  var spdBy: Table[string, tuple[delta: int64, speed: float64]] = initTable[
+      string, tuple[delta: int64, speed: float64]]()
   for f in sfeats:
     let p = f{"properties"}
     if p == nil: continue
@@ -39,7 +40,9 @@ proc fetchWindAt*(scanDt: Time, windowMinutes = 10): seq[WindStation] =
       spdBy[sid] = (delta, p{"value"}.getFloat())
 
   # Direction: nearest observation per station.
-  var dirBest: Table[string, tuple[delta: int64, dirFrom, lon, lat: float64]] = initTable[string, tuple[delta: int64, dirFrom, lon, lat: float64]]()
+  var dirBest: Table[string, tuple[delta: int64, dirFrom, lon,
+      lat: float64]] = initTable[string, tuple[delta: int64, dirFrom, lon,
+      lat: float64]]()
   for f in dfeats:
     let p = f{"properties"}
     if p == nil: continue
@@ -65,7 +68,8 @@ proc fetchWindAt*(scanDt: Time, windowMinutes = 10): seq[WindStation] =
 type
   WindArrow* = tuple[lon, lat, dirFrom, speed: float64]
 
-proc assignWindToSites*(stations: seq[WindStation], sites: openArray[WindSite]): seq[WindArrow] =
+proc assignWindToSites*(stations: seq[WindStation], sites: openArray[
+    WindSite]): seq[WindArrow] =
   if stations.len == 0 or sites.len == 0:
     return @[]
   for site in sites:
@@ -84,14 +88,15 @@ proc assignWindToSites*(stations: seq[WindStation], sites: openArray[WindSite]):
         inc n
     if n == 0:
       continue
-    let meanDir = (radToDeg(arctan2(sinSum / float(n), cosSum / float(n))) + 360.0) mod 360.0
+    let meanDir = (radToDeg(arctan2(sinSum / float(n), cosSum / float(n))) +
+        360.0) mod 360.0
     let meanSpd = spdSum / float(n)
     result.add((site.lon, site.lat, meanDir, meanSpd))
 
 # --- Arrow geometry (in projection metres) ---
 
 type
-  ArrowGeom = seq[tuple[x, y: float64]]  # 7-vertex polygon in projection metres
+  ArrowGeom = seq[tuple[x, y: float64]] # 7-vertex polygon in projection metres
 
 proc arrowEndpoints*(proj: Projection, arrows: seq[WindArrow],
                      lengthM = ArrowLengthM): tuple[x0, y0, x1, y1, fx, fy: seq[float64]] =
@@ -123,9 +128,9 @@ proc arrowEndpoints*(proj: Projection, arrows: seq[WindArrow],
 
 proc arrowPolygons*(x0, y0, x1, y1, fx, fy: seq[float64]): seq[ArrowGeom] =
   const
-    ArrowShaftHalfWidthM = 7200.0    # shaft half-width
-    ArrowHeadLenM        = 31500.0   # head length (77% of the 41 km arrow)
-    ArrowHeadHalfWidthM  = 14000.0   # head half-width
+    ArrowShaftHalfWidthM = 7200.0 # shaft half-width
+    ArrowHeadLenM = 31500.0       # head length (77% of the 41 km arrow)
+    ArrowHeadHalfWidthM = 14000.0 # head half-width
   for i in 0 ..< x0.len:
     let dx = fx[i]
     let dy = fy[i]
