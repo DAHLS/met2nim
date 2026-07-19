@@ -167,7 +167,9 @@ proc parseIsoUtc*(s: string): Time =
   var t = s.replace("Z", "+00:00")
   let dot = t.find('.')
   if dot >= 0:
-    let tzStart = t.find('+', start = dot)
+    # The offset may be negative (`...21.735000-05:00`): search for both
+    # signs. Starting after the dot means the date's '-' is never seen.
+    let tzStart = t.find({'+', '-'}, start = dot)
     if tzStart >= 0:
       t = t[0 ..< dot] & t[tzStart .. ^1]
   result = parse(t, "yyyy-MM-dd'T'HH:mm:sszzz", utc()).toTime()

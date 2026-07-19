@@ -9,17 +9,19 @@ type
     scanDt*: Time # UTC
     dtIso*: string
 
-proc extractFeature(f: JsonNode): RadarItem =
+proc extractFeature*(f: JsonNode): RadarItem =
   let idNode = f{"id"}
   if idNode == nil or idNode.kind != JString:
     raise newException(ValueError, "radar feature missing required 'id' field")
   result.fname = idNode.getStr()
+  # {} is nil-safe; strict [] would raise KeyError on a missing nested key
+  # (e.g. an asset.data object without "href").
   let asset = f{"asset"}
   if asset != nil and asset.kind == JObject:
-    if asset.hasKey("data"):
-      result.href = asset["data"]["href"].getStr()
-    elif asset.hasKey("href"):
-      result.href = asset["href"].getStr()
+    let hrefNode = if asset.hasKey("data"): asset{"data"}{"href"}
+                   else: asset{"href"}
+    if hrefNode != nil and hrefNode.kind == JString:
+      result.href = hrefNode.getStr()
   let props = f{"properties"}
   if props != nil and props.hasKey("datetime"):
     result.dtIso = props["datetime"].getStr()
@@ -32,21 +34,25 @@ proc fetchNewestRadar*(collection: string): RadarItem =
     raise newException(ValueError, "No radar files in collection '" &
         collection & "'")
   result = extractFeature(feats[0])
+  if result.href.len == 0:
+    raise newException(ValueError, "Newest radar file in collection '" &
+        collection & "' has no download href")
+  if result.dtIso.len == 0:
+    raise newException(ValueError, "Newest radar file in collection '" &
+        collection & "' has no datetime")
 
-proc fetchNewestRadarSet*(collection: string, limit = 10): ScanInfo =
-  let url = &"{DmiRadarApi}/collections/{collection}/items?sortorder=datetime,DESC&limit={limit}"
-  let data = httpGetJson(url)
-  let feats = data{"features"}
+proc pickNewestScan*(feats: JsonNode, collection: string): ScanInfo =
+  # Group by datetime, then pick the scan time with the most stations.
+  # Pure (no HTTP) so the grouping logic is unit-testable.
   if feats == nil or feats.len == 0:
     raise newException(ValueError, "No radar files in collection '" &
         collection & "'")
 
-  # Group by datetime.
   var byTime: Table[string, seq[RadarItem]] = initTable[string, seq[RadarItem]]()
   for f in feats:
     try:
       let item = extractFeature(f)
-      if item.href.len > 0:
+      if item.href.len > 0 and item.dtIso.len > 0:
         byTime.mgetOrPut(item.dtIso, @[]).add(item)
     except CatchableError:
       discard
@@ -55,8 +61,8 @@ proc fetchNewestRadarSet*(collection: string, limit = 10): ScanInfo =
     raise newException(ValueError, "No radar files with a downloadable href in collection '" &
         collection & "'")
 
-  # Pick the scan time with the most stations. Iterate datetime keys in
-  # descending order (ISO-8601 sorts lexically) so ties favour the newest.
+  # Iterate datetime keys in descending order (ISO-8601 sorts lexically)
+  # so ties favour the newest.
   var bestDt = ""
   var bestItems: seq[RadarItem] = @[]
   for dt in toSeq(byTime.keys).sorted(order = Descending):
@@ -69,11 +75,28 @@ proc fetchNewestRadarSet*(collection: string, limit = 10): ScanInfo =
   result.dtIso = bestDt
   result.scanDt = parseIsoUtc(bestDt)
 
+proc fetchNewestRadarSet*(collection: string, limit = 10): ScanInfo =
+  let url = &"{DmiRadarApi}/collections/{collection}/items?sortorder=datetime,DESC&limit={limit}"
+  let data = httpGetJson(url)
+  result = pickNewestScan(data{"features"}, collection)
+
 proc cleanStaleTmp() =
   # Remove leftover .h5.tmp files from a previous interrupted download.
   for f in walkFiles(DataDir / "*.h5.tmp"):
     try: removeFile(f)
     except CatchableError: discard
+
+proc downloadH5(url, dest: string) =
+  # Download to a sibling tmp file, then rename into place, so a crash
+  # mid-download never leaves a partial .h5 behind. The HDF5 magic check
+  # rejects error pages served with a 200 status before they get cached.
+  let data = httpGetBytes(url, RadarFetchTimeoutMs)
+  if data.len < 8 or data[0 ..< 4] != "\x89HDF":
+    raise newException(ValueError, "radar download is not an HDF5 file (" &
+        $data.len & " bytes)")
+  let tmp = dest & ".tmp"
+  writeFile(tmp, data)
+  moveFile(tmp, dest)
 
 proc downloadAndCacheRadarSet*(si: ScanInfo): seq[string] =
   discard existsOrCreateDir(DataDir)
@@ -89,10 +112,7 @@ proc downloadAndCacheRadarSet*(si: ScanInfo): seq[string] =
     if not downloaded:
       echo "Downloading radar files..."
       downloaded = true
-    let data = httpGetBytes(item.href, RadarFetchTimeoutMs)
-    let tmp = radarPath & ".tmp"
-    writeFile(tmp, data)
-    moveFile(tmp, radarPath)
+    downloadH5(item.href, radarPath)
     h5Paths.add(radarPath)
   if not downloaded:
     echo "All radar files already cached; skipping download."
@@ -113,10 +133,7 @@ proc downloadAndCacheRadarSingle*(item: RadarItem): string =
     echo "Newest radar already cached; skipping download."
     return radarPath
   echo "Downloading radar file..."
-  let data = httpGetBytes(item.href, RadarFetchTimeoutMs)
-  let tmp = radarPath & ".tmp"
-  writeFile(tmp, data)
-  moveFile(tmp, radarPath)
+  downloadH5(item.href, radarPath)
   # Delete old .h5 files.
   for f in walkFiles(DataDir / "*.h5"):
     if f != radarPath:
@@ -138,6 +155,6 @@ proc parseRadarField*(paths: seq[string],
       stations.add(st)
     result = compositePseudoCappi(stations, outProj)
     let ext = result.extent
-    echo &"  pseudoCappi: {paths.len} radar(s) max-blended (grid {(ext[1]-ext[0])/1000:.0f} km)"
+    echo &"  pseudoCappi: {paths.len} radar(s) max-blended (grid {int((ext[1]-ext[0])/1000 + 0.5)} km)"
   of ckComposite:
     result = parseRadarH5(paths[0])

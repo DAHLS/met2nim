@@ -76,7 +76,7 @@ proc blendSrcOver(canvas: Image, px, py: int, src: ColorRGBA) =
   let db = uint8(float(dest.b) * (1.0 - af) + float(src.b) * af + 0.5)
   canvas[px, py] = rgba(dr, dg, db, 255)
 
-proc renderRadarOverlay*(canvas: Image, rf: RadarField, viewExt: Extent,
+proc renderRadarOverlay(canvas: Image, rf: RadarField, viewExt: Extent,
                          minDbz: float32, despeckle: bool) =
   let dbz = cleanRadar(rf.dbz, minDbz, despeckle)
   let rows = dbz.shape.data[0]
@@ -118,7 +118,7 @@ proc renderRadarOverlay*(canvas: Image, rf: RadarField, viewExt: Extent,
                      uint8(c[2] * 255.0 + 0.5), uint8(c[3] * 255.0 + 0.5))
       canvas.blendSrcOver(px, py, src)
 
-proc renderSatelliteBackground*(canvas: Image, satImg: Image,
+proc renderSatelliteBackground(canvas: Image, satImg: Image,
                                 satBbox: tuple[w, s, e, n: float64],
                                 proj: Projection, viewExt: Extent) =
   let
@@ -161,7 +161,7 @@ proc renderSatelliteBackground*(canvas: Image, satImg: Image,
         continue
       canvas.blendSrcOver(px, py, src)
 
-proc renderWindArrows*(ctx: contexts.Context, proj: Projection, viewExt: Extent,
+proc renderWindArrows(ctx: contexts.Context, proj: Projection, viewExt: Extent,
                        arrows: seq[WindArrow], windFont: Font) =
   if arrows.len == 0:
     return
@@ -185,14 +185,15 @@ proc renderWindArrows*(ctx: contexts.Context, proj: Projection, viewExt: Extent,
     if started:
       ctx.closePath()
       ctx.fill()
-  # Speed labels: bold black text with white outline on each arrow.
-  # Both stroke and fill use the same typeset arrangement, so they align
-  # automatically (no manual baseline offset needed).
+  # Speed labels: bold black text with white outline on each arrow,
+  # rounded to the nearest m/s. Both stroke and fill use the same
+  # typeset arrangement, so they align automatically (no manual baseline
+  # offset needed).
   for i, a in arrows:
     let mx = (x0[i] + x1[i]) / 2.0
     let my = (y0[i] + y1[i]) / 2.0
     let (px, py) = toCanvasPx(viewExt, mx, my, cw, ch)
-    let label = $int(a.speed)
+    let label = $int(a.speed + 0.5)
     let t = translate(vec2(px, py))
     # White stroke (outline) drawn first.
     windFont.paint = rgba(255, 255, 255, 255)
@@ -204,7 +205,7 @@ proc renderWindArrows*(ctx: contexts.Context, proj: Projection, viewExt: Extent,
     ctx.image.fillText(windFont, label, t,
       hAlign = CenterAlign, vAlign = MiddleAlign)
 
-proc renderLightning*(ctx: contexts.Context, proj: Projection, viewExt: Extent,
+proc renderLightning(ctx: contexts.Context, proj: Projection, viewExt: Extent,
                       strikes: seq[LightningStrike], scanTime: Time) =
   if strikes.len == 0:
     return

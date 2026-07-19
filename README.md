@@ -7,7 +7,7 @@ This is a Nim rewrite of the Python project [`met2img`](../met2img.py). It is an
 ## What it does
 
 - **Radar data** — downloads the newest ODIM_H5 radar data from DMI's open data API. Supports the `composite` (single pre-gridded file) and `pseudoCappi` (multiple station files, reprojected and max-blended) collections.
-- **Wind observations** — fetches wind direction and speed from DMI's meteorological observation API, rendered as semi-transparent arrows at 8 fixed anchor points across Denmark. Positions never move between runs; only direction and speed change.
+- **Wind observations** — fetches wind direction and speed from DMI's meteorological observation API, rendered as semi-transparent arrows at 8 fixed anchor points across Denmark. Each arrow is the circular mean (direction) and arithmetic mean (speed) of all stations within 75 km of its anchor, computed via Vincenty geodesic. Positions never move between runs; only direction and speed change. Speed labels are rounded to the nearest m/s.
 - **Lightning observations** — fetches triangulated lightning strikes from DMI's lightning data API over a rolling 3-hour window (anchored to the radar scan time) and renders them as small bright-purple diamonds with a thin black outline. Markers fade linearly with age: 100% at 0h → 0% at 3h. A persistent rolling cache (`data/lightning.json`) accumulates strikes across runs with id-based dedup and an incremental fetch with a 2-minute overlap, so only the delta is requested each cron cycle.
 - **Satellite background** — downloads a satellite image via WMS GetMap. Supports EUMETSAT MTG GeoColor (day/night blend, 10-minute cadence), MTG true-color, MSG natural color, and NASA GIBS MODIS Terra true-color (daily, razor-sharp). Falls back to GIBS MODIS if an EUMETSAT source fails.
 - **Coastlines** — draws simplified Natural Earth 10m coastlines from a bundled GeoJSON file.
@@ -83,14 +83,14 @@ Output: `radar_YYYYMMDD-HHMM.png` (UTC timestamp from radar scan time)
 | `--despeckle` | — | Remove isolated single-pixel echoes (3×3 median filter) |
 | `--font PATH` | embedded | Use a specific `.ttf`/`.otf` font for wind labels (default: bundled DejaVuSans-Bold) |
 
-Both `--flag value` and `--flag=value` forms are accepted. Value-taking flags error out if no value is supplied. `--zoom` must be positive and `--min-dbz` must be a finite number; `--outdir` is created recursively (parent directories included).
+Both `--flag value` and `--flag=value` forms are accepted. Value-taking flags error out if no value is supplied. `--zoom` must be positive and finite and `--min-dbz` must be finite; unknown options and stray positional arguments are errors. `--outdir` is created recursively (parent directories included).
 
 ### Satellite sources
 
 - **geocolour** (default) — MTG GeoColor, geostationary, 10 min cadence. Blends true-color by day with infrared at night. Best all-around choice; works around the clock.
-- **eumetsat-mtg** — MTG true-color, geostationary, 10 min cadence. Sharper but visible-light only — the eastern side goes dark/transparent after sunset, which triggers an automatic fallback to GIBS MODIS.
+- **eumetsat-mtg** — MTG true-color, geostationary, 10 min cadence. Sharper but visible-light only — the eastern side goes dark after sunset, and once the response is fully transparent the tool falls back to GIBS MODIS automatically.
 - **eumetsat-msg** — MSG natural color, geostationary, 15 min cadence.
-- **gibs-modis** — MODIS Terra true-color, ~250 m resolution, daily morning overpass (~09 UTC). Razor-sharp but clouds may not match the radar scan time. GIBS has a ~24h processing lag; the tool probes the date and steps back up to 3 days to find the most recent day with real (non-black) tiles.
+- **gibs-modis** — MODIS Terra true-color, ~250 m resolution, daily morning overpass (~09 UTC). Razor-sharp but clouds may not match the radar scan time. GIBS has a ~24h processing lag; the tool probes the date and steps back up to 3 days to find the most recent day with real (non-black) tiles. If no day in that window has real tiles, the satellite background is skipped with a warning.
 - **none** — No satellite background (black canvas with radar + coastlines + wind).
 
 When an EUMETSAT source fails or returns a fully transparent image (e.g. true-color at night), the tool detects this explicitly and falls back to GIBS daily MODIS.
@@ -120,15 +120,15 @@ nim c -d:release -d:H5_FUTURE -d:ssl -o:met2img src/met2img.nim
 
 Downloaded DMI data is stored in a `data/` folder and reused on subsequent runs:
 
-- **Radar** — `.h5` files are kept in `data/`. DMI filenames encode the scan timestamp, so an identical filename means identical data. If the cached file matches the newest available from the API, the download is skipped. Leftover `.h5.tmp` files from interrupted downloads are cleaned up on each run.
-- **Wind** — `wind_<scanstamp>.json` is saved alongside the radar file, keyed to the same scan timestamp. An empty result (no observations found) is not cached, so a transient API failure won't poison future runs for the same scan time.
+- **Radar** — `.h5` files are kept in `data/`. DMI filenames encode the scan timestamp, so an identical filename means identical data. If the cached file matches the newest available from the API, the download is skipped. Downloads are verified against the HDF5 magic bytes before caching (an error page served with a 200 status never becomes a cached "radar file"), written to a `.tmp` file and renamed into place, and leftover `.h5.tmp` files from interrupted downloads are cleaned up on each run. If a cached `.h5` fails to parse (e.g. corruption), it is deleted, re-downloaded, and parsed once more before giving up — a bad cache file can never wedge the cron loop.
+- **Wind** — `wind_<scanstamp>.json` is saved alongside the radar file, keyed to the same scan timestamp, written atomically (tmp + rename). An empty result (no observations found) is not cached, so a transient API failure won't poison future runs for the same scan time. An unreadable cache file is treated as a miss and refetched, which rewrites the file.
 - **Lightning** — `lightning.json` is a **persistent rolling cache** (unlike radar/wind, which are replaced each run). It stores every strike observed within the 3-hour window ending at the most recent radar scan time, plus that scan time as `lastFetch`. Each run:
   1. If the cache is empty/missing → full fetch `scanTime−3h .. scanTime`, reset the cache.
   2. If `scanTime` is newer than `lastFetch` → incremental fetch `lastFetch−2min .. scanTime` (the overlap guards late-arriving records; dedup is by the DMI feature `id`, which is stable across responses, so re-fetching the overlap is harmless).
   3. If `scanTime` is not newer than `lastFetch` (manual rerun against an older cached radar, or a radar feed regression) → skip the fetch entirely and just re-prune against the new `scanTime` so opacity/ageing stays correct.
   4. Prune strikes with `observed < scanTime−3h`, then save.
   
-  A fetch failure is non-fatal: the existing cache is preserved (possibly empty) and the run continues with whatever strikes are on hand. Pagination is handled via the response's `rel="next"` links with a 10-page safety cap (~3M strikes across Denmark — well beyond any realistic storm), and a fallback heuristic flags a full page without a next link.
+  A fetch failure is non-fatal: the existing cache is preserved (possibly empty) and the run continues with whatever strikes are on hand. An unreadable cache file is discarded and rebuilt from a full fetch. The cache file is written atomically (tmp + rename). Pagination is handled via the response's `rel="next"` links with a 10-page safety cap (~3M strikes across Denmark — well beyond any realistic storm), and a fallback heuristic flags a full page without a next link.
 - **Cleanup** — old `.h5` and `wind_*.json` files are deleted only after the new radar file has been written successfully, so a failed download never leaves `data/` empty. The lightning cache is untouched by these cleanup loops (they only match `*.h5` and `wind_*.json`); it is pruned in place on every run as described above.
 
 ## Deployment
@@ -188,7 +188,7 @@ The 32-bit binary requires the corresponding 32-bit runtime libraries on the tar
 
 ## Project organization
 
-The codebase is split into 12 small modules (~1,900 lines total), each with a single responsibility. The split follows the Python version's logical boundaries but adapts to Nim's module system and the available libraries.
+The codebase is split into 12 small modules (~2,000 lines total), each with a single responsibility. The split follows the Python version's logical boundaries but adapts to Nim's module system and the available libraries.
 
 ```
 met2nim/
@@ -204,11 +204,12 @@ met2nim/
 │   ├── sat.nim         # EUMETSAT WMS GetMap → pixie Image
 │   ├── coast.nim       # GeoJSON coastline loader + renderer
 │   ├── render.nim      # Compositing pipeline (pixie canvas)
-│   └── httputil.nim    # Shared HTTP helpers (GET json/bytes)
+│   └── httputil.nim    # Shared HTTP helpers (GET json/bytes, with retry)
 ├── met2img.nimble      # Nimble package file (deps, bin target, test task, srcDir = "src")
 ├── build.sh            # Build script
 ├── fonts/              # Bundled DejaVuSans-Bold.ttf (build-time only, embedded via staticRead)
 ├── coast.geojson       # Coastline data (build-time only, embedded via staticRead)
+├── tests/              # Unit-test suite (nimble test)
 ├── data/               # Radar/wind/lightning cache
 └── autotest/           # Cron output + log
 ```
@@ -221,13 +222,13 @@ met2nim/
 | `geo` | Stereographic + gnomonic forward/inverse projections, Vincenty geodesic inverse/forward, view extent calculation. | cartopy CRS + pyproj Geod | std/math (pure Nim) |
 | `h5read` | Reads ODIM_H5 datasets and group attributes via nimhdf5, applies gain/offset scaling, returns Arraymancer `Tensor[float32]`. Handles both composite (single file) and pseudoCappi (per-station) reads. | h5py + numpy | nimhdf5, arraymancer |
 | `interp` | Bilinear resampling of station-local grids onto a common output grid, then max-blends (strongest echo wins). | scipy.interpolate.griddata / RegularGridInterpolator | arraymancer |
-| `radar` | Fetches radar file metadata from DMI API (JSON), manages download + cache + cleanup, dispatches parsing to h5read/interp based on collection kind. | met2img.py fetch + cache functions | std/httpclient (via httputil) |
-| `wind` | Fetches wind_dir + wind_speed from DMI metObs API, assigns stations to fixed anchor sites (Voronoi-style nearest with radius cutoff via Vincenty geodesic), computes arrow polygon geometry, manages JSON cache. | met2img.py wind functions + pyproj Geod | std/httpclient, geo |
+| `radar` | Fetches radar file metadata from DMI API (JSON), manages download + cache + cleanup + corrupt-cache recovery, dispatches parsing to h5read/interp based on collection kind. | met2img.py fetch + cache functions | std/httpclient (via httputil) |
+| `wind` | Fetches wind_dir + wind_speed from DMI metObs API, assigns stations to fixed anchor sites (circular mean of all stations within a 75 km radius via Vincenty geodesic), computes arrow polygon geometry, manages JSON cache. | met2img.py wind functions + pyproj Geod | std/httpclient, geo |
 | `lightning` | Fetches triangulated lightning strikes from the DMI lightning API, maintains a persistent rolling 3h cache (`lightning.json`) with incremental fetch + id-based dedup + age-based prune, computes opacity aging. | (new — no Python equivalent) | std/httpclient, geo (via render), std/json, std/times |
 | `sat` | Downloads EUMETSAT GeoColor WMS GetMap image, decodes PNG to pixie Image, computes the geographic bounding box of the current view. | met2img.py satellite functions | pixie |
 | `coast` | Parses the embedded GeoJSON (loaded from a string, not a file), projects lat/lon coordinates through the map projection to canvas pixels, strokes coastline polylines. | cartopy cfeature.COASTLINE | pixie, std/json |
 | `render` | The compositing pipeline: black canvas → satellite background (per-pixel reprojection) → radar overlay (per-pixel colormap + alpha blend) → coastlines → wind arrow polygons + speed labels with outlined text → lightning diamonds (purple fill + black outline, aged alpha) → save PNG. Also contains the 3×3 median despeckle filter. | matplotlib + cartopy rendering | pixie, arraymancer |
-| `httputil` | Two shared procs (`httpGetJson`, `httpGetBytes`) used by radar, wind, and sat modules. | urllib.request | std/httpclient |
+| `httputil` | Two shared procs (`httpGetJson`, `httpGetBytes`) used by radar, wind, and sat modules. Status-checked; one automatic retry with a 2s pause absorbs transient API failures. | urllib.request | std/httpclient |
 
 ### Why not one file?
 
@@ -290,6 +291,7 @@ pyproj's `Geod.inv()` and `Geod.fwd()` have no Nim equivalent. I implemented Vin
 The pseudoCappi collection has 4 station files, each in a station-local gnomonic projection. They need to be reprojected onto a common stereographic output grid and max-blended. The replacement (`interp.nim`):
 
 - For each output grid point: inverse-project to lat/lon, forward-project into the station's gnomonic projection, bilinearly sample the station's grid (with NaN propagation — if any neighbor is NaN, the result is NaN, meaning "no echo at this point").
+- Each station's loop is clipped to its own footprint in output-grid pixels (plus a small margin). Stations cover only a fraction of the composite, so this skips most of the trig-heavy reprojection work without changing a single output value (verified bit-identical against the unclipped version).
 - Max-blend across stations: the strongest echo wins (same as DMI's composite).
 - Linear scan for grid cell lookup (no k-d tree needed because the grids are regular and small — 960×960 per station, 1200×1130 output).
 

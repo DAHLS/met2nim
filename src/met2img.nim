@@ -82,12 +82,16 @@ proc parseCli(): AppConfig =
     elif a == "-h":
       printUsage()
       quit(0)
+    else:
+      stderr.writeLine("error: unexpected argument: " & a)
+      quit(1)
     inc i
 
-  if math.isNaN(result.zoom) or result.zoom <= 0.0:
-    stderr.writeLine("error: --zoom must be a positive number")
+  if math.classify(result.zoom) in {fcNan, fcInf, fcNegInf} or
+      result.zoom <= 0.0:
+    stderr.writeLine("error: --zoom must be a positive finite number")
     quit(1)
-  if math.isNaN(result.minDbz):
+  if math.classify(result.minDbz) in {fcNan, fcInf, fcNegInf}:
     stderr.writeLine("error: --min-dbz must be a finite number")
     quit(1)
   if result.outDir.len == 0:
@@ -106,17 +110,19 @@ proc main() =
   var
     h5Paths: seq[string]
     scanDt: Time
+    si: ScanInfo
+    item: RadarItem
 
   try:
     if multiStation:
-      let si = fetchNewestRadarSet(collectionName)
+      si = fetchNewestRadarSet(collectionName)
       scanDt = si.scanDt
       echo &"  newest: {si.items.len} stations @ {scanDt.utc.format(\"yyyy-MM-dd HH:mm 'UTC'\")}"
-      for item in si.items:
-        echo "    " & item.fname
+      for it in si.items:
+        echo "    " & it.fname
       h5Paths = downloadAndCacheRadarSet(si)
     else:
-      let item = fetchNewestRadar(collectionName)
+      item = fetchNewestRadar(collectionName)
       scanDt = parseIsoUtc(item.dtIso)
       echo &"  newest: {item.fname}  ({scanDt.utc.format(\"yyyy-MM-dd HH:mm 'UTC'\")})"
       h5Paths = @[downloadAndCacheRadarSingle(item)]
@@ -129,7 +135,25 @@ proc main() =
   let windPath = DataDir / "wind_" & stamp & ".json"
 
   echo "Parsing radar data..."
-  let rf = parseRadarField(h5Paths, cfg.collection)
+  var rf: RadarField
+  try:
+    rf = parseRadarField(h5Paths, cfg.collection)
+  except CatchableError as e:
+    # A cached .h5 that fails to parse would otherwise crash every future
+    # run (the download step skips existing files). Delete the cached
+    # copy, re-download, and retry once before giving up.
+    stderr.writeLine(&"  warning: radar parse failed ({e.msg}); re-downloading")
+    for p in h5Paths:
+      try: removeFile(p)
+      except CatchableError: discard
+    try:
+      h5Paths =
+        if multiStation: downloadAndCacheRadarSet(si)
+        else: @[downloadAndCacheRadarSingle(item)]
+      rf = parseRadarField(h5Paths, cfg.collection)
+    except CatchableError as e2:
+      stderr.writeLine(&"error: radar parse failed after re-download ({e2.msg})")
+      quit(1)
   # Report reflectivity range.
   var
     minVal = Inf
@@ -138,15 +162,25 @@ proc main() =
     if v == v: # not NaN
       minVal = min(minVal, float(v))
       maxVal = max(maxVal, float(v))
-  echo &"  reflectivity range: {minVal:.1f} to {maxVal:.1f} dBZ"
+  if minVal <= maxVal:
+    echo &"  reflectivity range: {minVal:.1f} to {maxVal:.1f} dBZ"
+  else:
+    echo "  no valid reflectivity bins (all no-data)"
 
   # Wind data.
   var windStations: seq[WindStation] = @[]
   if not cfg.noWind:
+    var cacheHit = false
     if fileExists(windPath):
-      windStations = loadWindCache(windPath)
-      echo &"Wind cache hit: {windStations.len} stations ({scanDt.utc.format(\"HH:mm 'UTC'\")})"
-    else:
+      try:
+        windStations = loadWindCache(windPath)
+        cacheHit = true
+        echo &"Wind cache hit: {windStations.len} stations ({scanDt.utc.format(\"HH:mm 'UTC'\")})"
+      except CatchableError as e:
+        # Unreadable cache (e.g. truncated write) — treat as a miss; the
+        # refetch below rewrites the file.
+        stderr.writeLine(&"  warning: wind cache unreadable ({e.msg}); refetching")
+    if not cacheHit:
       echo &"Fetching wind observations near {scanDt.utc.format(\"HH:mm 'UTC'\")}..."
       try:
         windStations = fetchWindAt(scanDt)
@@ -158,21 +192,21 @@ proc main() =
           echo "  no wind observations found (not cached)"
       except CatchableError as e:
         stderr.writeLine(&"  warning: wind fetch failed ({e.msg})")
-      # Clean up old wind JSON files.
-      for f in walkFiles(DataDir / "wind_*.json"):
-        if f != windPath:
-          try: removeFile(f)
-          except CatchableError: discard
+    # Clean up old wind JSON files.
+    for f in walkFiles(DataDir / "wind_*.json"):
+      if f != windPath:
+        try: removeFile(f)
+        except CatchableError: discard
 
   let windArrows = if not cfg.noWind: assignWindToSites(windStations, WindSites)
                    else: @[]
 
-  let windFont = loadWindFont(cfg.fontPath)
+  let windFont = if not cfg.noWind: loadWindFont(cfg.fontPath) else: nil
 
   # Lightning data (rolling 3h cache, anchored to the radar scan time).
   var lightningStrikes: seq[LightningStrike] = @[]
   if not cfg.noLightning:
-    echo &"Acquiring lightning (window {LightningWindowHours:.0f}h up to {scanDt.utc.format(\"HH:mm 'UTC'\")})..."
+    echo &"Acquiring lightning (window {int(LightningWindowHours)}h up to {scanDt.utc.format(\"HH:mm 'UTC'\")})..."
     try:
       lightningStrikes = acquireLightning(scanDt)
       echo &"  {lightningStrikes.len} strikes in window"

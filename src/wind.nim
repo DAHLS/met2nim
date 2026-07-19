@@ -1,10 +1,10 @@
-import std/[strformat, times, math, tables, json]
+import std/[os, strformat, times, math, tables, json]
 import geo, config, httputil
 
 type
   WindStation* = tuple[lon, lat, dirFrom, speed: float64]
 
-proc acceptValue*(n: JsonNode): bool =
+proc acceptValue(n: JsonNode): bool =
   n != nil and n.kind in {JFloat, JInt}
 
 proc fetchWindAt*(scanDt: Time, windowMinutes = 10): seq[WindStation] =
@@ -164,7 +164,10 @@ proc saveWindCache*(path: string, stations: seq[WindStation]) =
     row.add(newJFloat(st.dirFrom))
     row.add(newJFloat(st.speed))
     arr.add(row)
-  writeFile(path, $arr)
+  # tmp + rename: an interrupted write never leaves a truncated cache.
+  let tmp = path & ".tmp"
+  writeFile(tmp, $arr)
+  moveFile(tmp, path)
 
 proc loadWindCache*(path: string): seq[WindStation] =
   let data = parseFile(path)

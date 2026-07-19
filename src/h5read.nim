@@ -10,10 +10,10 @@ type
     extent*: Extent # [xmin, xmax, ymin, ymax] in projection metres
     proj*: Projection
 
-proc failH5*(path, msg: string) =
+proc failH5(path, msg: string) =
   raise newException(ValueError, "Radar file '" & path & "': " & msg)
 
-proc readAttrF64*(grp: H5Group, name: string, path: string): float64 =
+proc readAttrF64(grp: H5Group, name: string, path: string): float64 =
   let kind = grp.attrs[name]
   case kind
   of dkFloat64: result = grp.attrs[name, float64]
@@ -27,12 +27,12 @@ proc readAttrF64*(grp: H5Group, name: string, path: string): float64 =
   of dkUInt32: result = float64(grp.attrs[name, uint32])
   else: failH5(path, "attr '" & name & "' has unexpected dtype: " & $kind)
 
-proc readAttrStr*(grp: H5Group, name: string, path: string): string =
+proc readAttrStr(grp: H5Group, name: string, path: string): string =
   result = grp.attrs[name, string]
 
 # --- Shared helpers ---
 
-proc projectionExtent*(whereGrp: H5Group, proj: Projection,
+proc projectionExtent(whereGrp: H5Group, proj: Projection,
     path: string): Extent =
   # Project the four LL/LR/UL/UR corner attributes and return the
   # enclosing bbox in projection metres: (xmin, xmax, ymin, ymax).
@@ -48,7 +48,7 @@ proc projectionExtent*(whereGrp: H5Group, proj: Projection,
     result[2] = min(result[2], y)
     result[3] = max(result[3], y)
 
-proc fillScaled*[T](dest: var Tensor[float32], dset: H5DataSet,
+proc fillScaled[T](dest: var Tensor[float32], dset: H5DataSet,
                     gain, offset, nodata: float64) =
   let shape = dset.shape
   let rows = shape[0]
@@ -62,7 +62,7 @@ proc fillScaled*[T](dest: var Tensor[float32], dset: H5DataSet,
       else:
         dest[i, j] = float32(gain * float64(v) + offset)
 
-proc readScaledDbz*(dset: H5DataSet, gain, offset, nodata: float64,
+proc readScaledDbz(dset: H5DataSet, gain, offset, nodata: float64,
                     path: string): Tensor[float32] =
   # Read the raw dataset and convert to float32 reflectivity via
   # dbz = gain * raw + offset, mapping `nodata` to NaN.
@@ -72,18 +72,20 @@ proc readScaledDbz*(dset: H5DataSet, gain, offset, nodata: float64,
   result = newTensor[float32]([rows, cols])
   case dset.dtypeAnyKind
   of dkUInt8: fillScaled[uint8](result, dset, gain, offset, nodata)
+  of dkUInt16: fillScaled[uint16](result, dset, gain, offset, nodata)
+  of dkUInt32: fillScaled[uint32](result, dset, gain, offset, nodata)
   of dkInt16: fillScaled[int16](result, dset, gain, offset, nodata)
   of dkInt8: fillScaled[int8](result, dset, gain, offset, nodata)
   else: failH5(path, "unexpected dataset dtype: " & $dset.dtypeAnyKind)
 
-proc readWhatScaling*(h5f: H5File, path: string): tuple[gain, offset,
+proc readWhatScaling(h5f: H5File, path: string): tuple[gain, offset,
     nodata: float64] =
   let whatGrp = h5f["what".grp_str]
   result.gain = readAttrF64(whatGrp, "gain", path)
   result.offset = readAttrF64(whatGrp, "offset", path)
   result.nodata = readAttrF64(whatGrp, "nodata", path)
 
-proc readProjection*(h5f: H5File, path: string): Projection =
+proc readProjection(h5f: H5File, path: string): Projection =
   let whereGrp = h5f["where".grp_str]
   result = parseProjdef(readAttrStr(whereGrp, "projdef", path))
 

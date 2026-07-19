@@ -28,7 +28,7 @@ proc lightningOpacity*(ageHours: float64): float32 =
 # Layout: { "lastFetch": "<iso>", "strikes": [[id, lon, lat, iso], ...] }
 # Kept deliberately close to wind.nim's saveWindCache/loadWindCache style.
 
-proc saveLightningCache*(path: string, cache: LightningCache) =
+proc saveLightningCache(path: string, cache: LightningCache) =
   var root = newJObject()
   root["lastFetch"] = newJString(formatIsoUtc(cache.lastFetch))
   var arr = newJArray()
@@ -40,9 +40,12 @@ proc saveLightningCache*(path: string, cache: LightningCache) =
     row.add(newJString(formatIsoUtc(s.observed)))
     arr.add(row)
   root["strikes"] = arr
-  writeFile(path, $root)
+  # tmp + rename: an interrupted write never leaves a truncated cache.
+  let tmp = path & ".tmp"
+  writeFile(tmp, $root)
+  moveFile(tmp, path)
 
-proc loadLightningCache*(path: string): LightningCache =
+proc loadLightningCache(path: string): LightningCache =
   if not fileExists(path):
     return
   let data = parseFile(path)
@@ -154,14 +157,20 @@ proc mergeAndPrune*(cache: var LightningCache, fetched: seq[LightningStrike],
 
 proc acquireLightning*(scanTime: Time, cachePath = DataDir /
     LightningCacheFile): seq[LightningStrike] =
-  var cache = loadLightningCache(cachePath)
+  var cache: LightningCache
+  try:
+    cache = loadLightningCache(cachePath)
+  except CatchableError as e:
+    # Unreadable cache (e.g. truncated write) — start fresh; the save at
+    # the end of this proc rewrites the file.
+    stderr.writeLine(&"  warning: lightning cache unreadable ({e.msg}); starting fresh")
   let
     nowStr = formatIsoUtc(scanTime)
     fullLo = formatIsoUtc(scanTime - initDuration(hours = int(
         LightningWindowHours)))
 
   if cache.lastFetch == Time() and cache.strikes.len == 0:
-    echo &"Lightning cache empty; fetching full {LightningWindowHours:.0f}h window..."
+    echo &"Lightning cache empty; fetching full {int(LightningWindowHours)}h window..."
     try:
       let fetched = fetchLightningPage(fullLo, nowStr)
       echo &"  fetched {fetched.len} strikes"

@@ -79,14 +79,42 @@ proc compositePseudoCappi*(stations: seq[PseudoCappiStation],
   var grid = newTensorWith[float32]([ny, nx], NaN.float32)
 
   for st in stations:
-    for iy in 0 ..< ny:
+    # Clip the loop to the station's footprint in output-grid pixels.
+    # Each station covers only a fraction of the composite; sampling the
+    # full grid per station would spend most iterations on out-of-domain
+    # points that bilinearSample rejects with NaN anyway, so the result
+    # is unchanged. The margin covers the slight outward bulge of the
+    # footprint's curved edges beyond the corner bbox.
+    const ClipMarginPx = 2
+    var
+      stXmin = Inf
+      stXmax = -Inf
+      stYmin = Inf
+      stYmax = -Inf
+    for (sx, sy) in [(st.xIn[0], st.yIn[0]), (st.xIn[^1], st.yIn[0]),
+                     (st.xIn[0], st.yIn[^1]), (st.xIn[^1], st.yIn[^1])]:
+      let (lat, lon) = st.stationProj.inverse(sx, sy)
+      let (ox, oy) = outProj.forward(lat, lon)
+      stXmin = min(stXmin, ox)
+      stXmax = max(stXmax, ox)
+      stYmin = min(stYmin, oy)
+      stYmax = max(stYmax, oy)
+    let ix0 = max(0, int((stXmin - xmin) / (xmax - xmin) * float64(nx - 1)) -
+        ClipMarginPx)
+    let ix1 = min(nx - 1, int((stXmax - xmin) / (xmax - xmin) * float64(
+        nx - 1)) + ClipMarginPx + 1)
+    let iy0 = max(0, int((ymax - stYmax) / (ymax - ymin) * float64(ny - 1)) -
+        ClipMarginPx)
+    let iy1 = min(ny - 1, int((ymax - stYmin) / (ymax - ymin) * float64(
+        ny - 1)) + ClipMarginPx + 1)
+    for iy in iy0 .. iy1:
       let yOut = ymax - (ymax - ymin) * float64(iy) / float64(ny - 1)
       # Running indices: reset per row; advanced in place by bilinearSample
       # as xOut increases monotonically across the row.
       var
         j0 = 0
         i0 = 0
-      for ix in 0 ..< nx:
+      for ix in ix0 .. ix1:
         let xOut = xmin + (xmax - xmin) * float64(ix) / float64(nx - 1)
         # Output stereographic -> lat/lon -> station gnomonic.
         let (lat, lon) = outProj.inverse(xOut, yOut)

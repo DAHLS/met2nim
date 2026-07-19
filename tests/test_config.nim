@@ -33,3 +33,34 @@ suite "config: defaults":
     check c.minDbz == 10.0f
     check c.zoom == 1.0
     check c.fontPath == ""
+
+suite "config: parseIsoUtc":
+  # Round-trip through formatIsoUtc so every expectation reads as UTC.
+
+  test "plain Z":
+    check formatIsoUtc(parseIsoUtc("2026-07-19T01:00:00Z")) ==
+        "2026-07-19T01:00:00Z"
+
+  test "numeric +00:00 offset":
+    check formatIsoUtc(parseIsoUtc("2026-07-19T01:00:00+00:00")) ==
+        "2026-07-19T01:00:00Z"
+
+  test "fractional seconds + Z":
+    check formatIsoUtc(parseIsoUtc("2026-07-19T19:36:21.735000Z")) ==
+        "2026-07-19T19:36:21Z"
+
+  test "fractional seconds + numeric offset":
+    check formatIsoUtc(parseIsoUtc("2026-07-19T01:00:00.735000+00:00")) ==
+        "2026-07-19T01:00:00Z"
+
+  test "positive offset converts to UTC":
+    check formatIsoUtc(parseIsoUtc("2026-07-19T03:00:00+02:00")) ==
+        "2026-07-19T01:00:00Z"
+
+  test "negative offset converts to UTC":
+    check formatIsoUtc(parseIsoUtc("2026-07-19T01:00:00-05:00")) ==
+        "2026-07-19T06:00:00Z"
+
+  test "fractional seconds + negative offset":
+    check formatIsoUtc(parseIsoUtc("2026-07-19T01:00:00.735-05:00")) ==
+        "2026-07-19T06:00:00Z"

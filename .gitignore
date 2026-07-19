@@ -3,6 +3,7 @@
 /met2img_i386
 /tests/test_geo
 /tests/test_config
+/tests/test_radar
 /tests/test_interp
 /tests/test_wind
 /tests/test_lightning

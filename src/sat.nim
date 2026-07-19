@@ -27,8 +27,8 @@ proc viewGeographicBbox*(proj: Projection, zoom: float64): tuple[w, s, e, n: flo
   result.s = max(latMin, -WmsExtentLimit)
   result.n = min(latMax, WmsExtentLimit)
 
-proc fetchEumetsat*(layer: string, cadence: int,
-                    proj: Projection, scanDt: Time, zoom: float64): Image =
+proc fetchEumetsat(layer: string, cadence: int,
+                   proj: Projection, scanDt: Time, zoom: float64): Image =
   let dt = scanDt.utc()
   let snapped = scanDt - initDuration(
     minutes = dt.minute mod cadence,
@@ -58,17 +58,18 @@ proc fetchEumetsat*(layer: string, cadence: int,
   if not anyOpaque:
     raise newException(ValueError, "EUMETSAT image is fully transparent")
 
-proc gibsProbeDate*(dateStr: string): bool =
+proc gibsProbeDate(dateStr: string): bool =
   # Probe a small tile over central Europe to check if GIBS has real
   # (non-black) tiles for this date. GIBS MODIS Terra has a ~24h
-  # processing lag — tiles may exist but be entirely black.
+  # processing lag — tiles may exist but be entirely black. No retry:
+  # any failure is treated as "no tiles" and the caller steps back a day.
   let probeBbox = "8.0,54.0,12.0,58.0"
   let url = &"{GibsWmsUrl}?service=WMS&request=GetMap&version=1.3.0" &
             &"&layers={GibsLayer}&styles=&format=image/jpeg" &
             &"&time={dateStr}&width=100&height=100" &
             &"&crs=CRS:84&bbox={probeBbox}"
   try:
-    let jpgData = httpGetBytes(url, GibsProbeTimeoutMs)
+    let jpgData = httpGetBytes(url, GibsProbeTimeoutMs, retries = 0)
     let img = decodeImage(jpgData)
     # Check if image is entirely black (max pixel == 0).
     for px in img.data:
@@ -78,20 +79,23 @@ proc gibsProbeDate*(dateStr: string): bool =
   except CatchableError:
     return false
 
-proc fetchGibs*(proj: Projection, scanDt: Time, zoom: float64): Image =
+proc fetchGibs(proj: Projection, scanDt: Time, zoom: float64): Image =
   let bbox = viewGeographicBbox(proj, zoom)
 
   # Step back up to 3 days to find the most recent date with real tiles.
   var date = scanDt.utc()
   var chosen = ""
-  for attempt in 0 ..< 3:
+  for attempt in 0 ..< 4:
     let dateStr = date.format("yyyy-MM-dd")
     if gibsProbeDate(dateStr):
       chosen = dateStr
       break
     date = date - 1.days
   if chosen == "":
-    chosen = scanDt.utc().format("yyyy-MM-dd")
+    # Fetching an unprobed date would likely return all-black tiles —
+    # better no background than a black map pretending to be satellite.
+    stderr.writeLine("warning: no real GIBS tiles in the last 3 days; skipping satellite background")
+    return nil
 
   let url = &"{GibsWmsUrl}?service=WMS&request=GetMap&version=1.3.0" &
             &"&layers={GibsLayer}&styles=&format=image/jpeg" &
